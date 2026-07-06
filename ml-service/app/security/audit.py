@@ -39,6 +39,7 @@ async def log_action(
     justification: Optional[str] = None,
     grant_type: str = "normal",
     ip_address: Optional[str] = None,
+    grant_expires_at: Optional[datetime] = None,
 ) -> None:
     """Every ML-service action that touches employee data calls this.
 
@@ -48,6 +49,11 @@ async def log_action(
     ('hr_manager','it_manager','finance_manager','security_admin','general_manager')
     - Postgres will reject the insert if it isn't, which is the correct
       failure mode (better a rejected log write than a silently wrong one).
+
+    grant_expires_at: required for break-glass / delegated access grants
+    ('break_glass' or 'delegated' grant_type) — records when that elevated
+    access expires, so expiry is enforceable and auditable, not just
+    logged as a type. Left as None for normal-role actions.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -55,8 +61,8 @@ async def log_action(
             """
             INSERT INTO audit_log
                 (actor_user_id, actor_role, action, resource_type, resource_id,
-                 justification, grant_type, created_at, ip_address)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 justification, grant_type, grant_expires_at, created_at, ip_address)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             """,
             actor_user_id,
             actor_role,
@@ -65,6 +71,7 @@ async def log_action(
             resource_id,
             justification,
             grant_type,
+            grant_expires_at,
             datetime.now(timezone.utc),
             ip_address,
         )
