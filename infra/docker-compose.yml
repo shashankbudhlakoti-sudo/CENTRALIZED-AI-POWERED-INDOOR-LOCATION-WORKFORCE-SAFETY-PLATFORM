@@ -51,7 +51,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://safety:safety_dev_pw@db:5432/safety_platform
+      DATABASE_URL: postgresql+psycopg://safety:safety_dev_pw@db:5432/safety_platform
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       KEYCLOAK_URL: http://keycloak:8080
