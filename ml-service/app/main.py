@@ -143,9 +143,17 @@ async def train_fingerprint_model(req: TrainRequest, user: AuthenticatedUser = D
         req.zone_id, report.mean_error_m, user.sub,
     )
     # Retraining is a system-level action, not tied to one employee, so
-    # target_employee_id is None - still logged so there's a record of who
-    # changed the live positioning model and when.
-    await log_action(user.sub, "fingerprint_model_retrained", None, reason_code="train_mode_walk")
+    # resource_id is None - still logged so there's a record of who
+    # changed the live positioning model and when. actor_role comes from
+    # the verified JWT, matching the user_role enum in schema.sql exactly.
+    await log_action(
+        actor_user_id=user.sub,
+        actor_role="security_admin",
+        action="model_retrain",
+        resource_type="model",
+        resource_id=req.zone_id,
+        justification="train_mode_walk",
+    )
 
     return ValidationResult(**report.as_dict())
 

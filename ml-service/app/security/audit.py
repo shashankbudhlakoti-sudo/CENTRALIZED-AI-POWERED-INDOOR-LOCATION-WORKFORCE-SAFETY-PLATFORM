@@ -7,19 +7,20 @@ on-demand AI call (NL query, checkpoint verification) that touches an
 individual employee's data MUST be logged here before the result is
 returned - not as an afterthought.
 
-This writes to the shared `audit_log` table (owned by Track A's schema) so
-there is exactly one audit trail for the whole system, not a second one
-only ML actions show up in.
+Column names match the shared /contracts/schema.sql exactly (Track A owns
+that table's schema) - this file writes to the SAME audit_log table the
+backend writes to, so there is one audit trail for the whole system.
 """
 
 import os
 from datetime import datetime, timezone
+from typing import Optional
 
 import asyncpg
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
-_pool: asyncpg.Pool | None = None
+_pool: Optional[asyncpg.Pool] = None
 
 
 async def get_pool() -> asyncpg.Pool:
@@ -30,27 +31,40 @@ async def get_pool() -> asyncpg.Pool:
 
 
 async def log_action(
-    user_id: str,
+    actor_user_id: str,
+    actor_role: str,
     action: str,
-    target_employee_id: str | None,
-    reason_code: str,
+    resource_type: str,
+    resource_id: Optional[str] = None,
+    justification: Optional[str] = None,
+    grant_type: str = "normal",
+    ip_address: Optional[str] = None,
 ) -> None:
     """Every ML-service action that touches employee data calls this.
 
-    action examples: 'nl_query', 'checkpoint_verify', 'anomaly_alert_raised'
-    reason_code: short machine-readable reason, e.g. 'manager_query',
-    'scheduled_gate_check', 'break_glass'
+    action examples: 'read', 'nl_query', 'checkpoint_verify', 'model_retrain'
+    resource_type: 'employee' | 'position_events' | 'alerts' | 'model', etc.
+    actor_role must be one of the schema's user_role enum values
+    ('hr_manager','it_manager','finance_manager','security_admin','general_manager')
+    - Postgres will reject the insert if it isn't, which is the correct
+      failure mode (better a rejected log write than a silently wrong one).
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO audit_log (user_id, action, target_employee_id, timestamp, reason_code)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO audit_log
+                (actor_user_id, actor_role, action, resource_type, resource_id,
+                 justification, grant_type, created_at, ip_address)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             """,
-            user_id,
+            actor_user_id,
+            actor_role,
             action,
-            target_employee_id,
+            resource_type,
+            resource_id,
+            justification,
+            grant_type,
             datetime.now(timezone.utc),
-            reason_code,
+            ip_address,
         )
