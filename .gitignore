@@ -1,0 +1,23 @@
+# Python
+ml-service/.venv/
+ml-service/__pycache__/
+ml-service/**/__pycache__/
+ml-service/.pytest_cache/
+ml-service/**/*.pyc
+ml-service/.env
+
+# Trained models - large binary artifacts, not source. Track A/B should
+# agree separately on where real trained models get stored (e.g. a
+# dedicated model registry or object storage), not committed to git.
+ml-service/data/models/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
