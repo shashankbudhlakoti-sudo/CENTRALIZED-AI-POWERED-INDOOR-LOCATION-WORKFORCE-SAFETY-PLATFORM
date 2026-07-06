@@ -52,10 +52,14 @@ async def _get_jwks() -> dict:
 
 
 class AuthenticatedUser:
-    def __init__(self, sub: str, roles: list[str], raw_claims: dict):
+    def __init__(self, sub: str, roles: list[str], raw_claims: dict, raw_token: str):
         self.sub = sub
         self.roles = roles
         self.raw_claims = raw_claims
+        self.raw_token = raw_token  # forwarded when this service itself calls
+        # the backend (e.g. PATCH /checkpoints/{id}/match) - reuses the
+        # caller's own Keycloak session rather than minting a separate
+        # service credential, since it's the same realm/audience.
 
     def has_role(self, role: str) -> bool:
         return role in self.roles
@@ -108,7 +112,7 @@ async def get_current_user(
             detail="MFA required for this role",
         )
 
-    return AuthenticatedUser(sub=claims["sub"], roles=roles, raw_claims=claims)
+    return AuthenticatedUser(sub=claims["sub"], roles=roles, raw_claims=claims, raw_token=token)
 
 
 def require_role(role: str):

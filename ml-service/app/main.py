@@ -24,6 +24,12 @@ from app.security.audit import log_action
 from app.models.position_filter import PositionFilterRegistry
 from app.models.train_mode import TrainingWalk, LabeledSample
 from app.models.fingerprinting import FingerprintModel
+from app.models.face_match import find_best_match, is_identity_mismatch
+from app.services.embedding_backend import EmbeddingGenerator, InsightFaceEmbeddingGenerator
+from app.services.enrolled_embeddings_repo import EnrolledEmbeddingsRepository, PostgresEnrolledEmbeddings
+from app.services.checkpoint_client import patch_checkpoint_match
+from typing import Optional
+import httpx
 
 MODEL_DIR = Path(os.environ.get("MODEL_DIR", "/data/models"))
 
@@ -178,3 +184,100 @@ async def predict_position(req: PredictRequest, user: AuthenticatedUser = Depend
     model = FingerprintModel.load(model_path)
     x, y = model.predict(req.rssi)
     return PredictResult(x=x, y=y)
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint verification (Section 5 / checkpoint_events)
+#
+# Backend owns creating the checkpoint_events row (zone_id, tag_id,
+# employee_id, photo_url) with match_status='pending'. This service
+# generates a face embedding from the photo, compares it against enrolled
+# employees, and PATCHes the result back via the backend's
+# PATCH /checkpoints/{id}/match - it never writes to Postgres directly for
+# this table (same single-write-path pattern as position_events).
+#
+# OPEN QUESTION for Shashank: a confident match whose identity disagrees
+# with the tag's claimed employee (see is_identity_mismatch) is the actual
+# badge-sharing/tailgating signal that alert_type='checkpoint_mismatch' is
+# for - but there's no alerts table schema or creation endpoint in this
+# scaffold yet, so this endpoint only logs that condition (audit_log +
+# structured log) rather than writing an alert. Need to know whether
+# alert creation happens here, on the backend, or in the separate anomaly
+# detection module before wiring that part up for real.
+# ---------------------------------------------------------------------------
+
+_embedding_generator: EmbeddingGenerator = InsightFaceEmbeddingGenerator()
+_enrolled_repo: EnrolledEmbeddingsRepository = PostgresEnrolledEmbeddings()
+
+
+class CheckpointVerifyRequest(BaseModel):
+    checkpoint_event_id: str
+    zone_id: str
+    tag_id: Optional[str] = None
+    claimed_employee_id: Optional[str] = None  # employee currently assigned to tag_id, if known
+    photo_url: str
+
+
+class CheckpointVerifyResult(BaseModel):
+    checkpoint_event_id: str
+    match_employee_id: Optional[str]
+    match_confidence: Optional[float]
+    match_status: str
+    identity_mismatch: bool  # see OPEN QUESTION above - not yet wired to an alert
+
+
+@app.post(
+    "/internal/checkpoint-verify",
+    response_model=CheckpointVerifyResult,
+    dependencies=[Depends(require_role("security_admin"))],
+)
+async def checkpoint_verify(
+    req: CheckpointVerifyRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        photo_resp = await client.get(req.photo_url)
+        photo_resp.raise_for_status()
+        photo_bytes = photo_resp.content
+
+    query_embedding = await _embedding_generator.generate(photo_bytes)
+    enrolled = await _enrolled_repo.fetch_all()
+    result = find_best_match(query_embedding, enrolled)
+    mismatch = is_identity_mismatch(result, req.claimed_employee_id)
+
+    await patch_checkpoint_match(
+        checkpoint_event_id=req.checkpoint_event_id,
+        result=result,
+        service_token=user.raw_token,
+    )
+
+    # Every checkpoint verification touches an individual's data - logged
+    # before returning, per Section 8. resource_id is the checkpoint event,
+    # not the matched employee, since match_employee_id may be None.
+    await log_action(
+        actor_user_id=user.sub,
+        actor_role="security_admin",
+        action="checkpoint_verify",
+        resource_type="checkpoint_events",
+        resource_id=req.checkpoint_event_id,
+        justification=f"zone={req.zone_id} status={result.match_status}",
+    )
+
+    if mismatch:
+        # Flagged loudly since there's no alert-creation path wired yet -
+        # see OPEN QUESTION above. Do not let this disappear silently into
+        # an info-level log line only.
+        logger.warning(
+            "checkpoint identity mismatch (tailgating signal) zone=%s "
+            "checkpoint_event_id=%s claimed=%s matched=%s - NO ALERT CREATED, "
+            "alert-creation path not yet implemented pending schema/ownership",
+            req.zone_id, req.checkpoint_event_id, req.claimed_employee_id, result.match_employee_id,
+        )
+
+    return CheckpointVerifyResult(
+        checkpoint_event_id=req.checkpoint_event_id,
+        match_employee_id=result.match_employee_id,
+        match_confidence=result.match_confidence,
+        match_status=result.match_status,
+        identity_mismatch=mismatch,
+    )
