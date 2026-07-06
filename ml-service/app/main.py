@@ -66,7 +66,9 @@ class FilteredPosition(BaseModel):
     tag_id: str
     x: float
     y: float
-    confidence: float
+    accuracy_m: float  # estimated positioning error in meters, matches
+    # position_events.accuracy_m. Distinct from checkpoint_events.match_confidence
+    # (face-match score) - do not conflate the two.
 
 
 @app.post("/internal/filter-position", response_model=FilteredPosition)
@@ -83,9 +85,9 @@ async def filter_position(
     treated as sufficient authorization.
     """
     kf = registry.get(reading.tag_id)
-    x, y, conf = kf.update(reading.x_meas, reading.y_meas, reading.timestamp, reading.confidence)
-    logger.info("filtered position tag=%s conf=%.2f", reading.tag_id, conf)
-    return FilteredPosition(tag_id=reading.tag_id, x=x, y=y, confidence=conf)
+    x, y, accuracy_m = kf.update(reading.x_meas, reading.y_meas, reading.timestamp, reading.confidence)
+    logger.info("filtered position tag=%s accuracy_m=%.2f", reading.tag_id, accuracy_m)
+    return FilteredPosition(tag_id=reading.tag_id, x=x, y=y, accuracy_m=accuracy_m)
 
 
 # ---------------------------------------------------------------------------

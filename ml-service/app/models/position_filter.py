@@ -41,16 +41,23 @@ class BadgeKalmanFilter:
         )
 
     def update(self, x_meas: float, y_meas: float, t: float, confidence: float = 1.0) -> tuple[float, float, float]:
-        """Feed one raw measurement, get back a smoothed (x, y, confidence).
+        """Feed one raw measurement, get back a smoothed (x, y, accuracy_m).
 
-        confidence in [0, 1] scales measurement trust - e.g. a reading seen
-        by only one beacon should carry lower confidence than one triangulated
-        from four beacons.
+        `confidence` (input, [0, 1]) scales measurement trust - e.g. a reading
+        seen by only one beacon should carry lower confidence than one
+        triangulated from four beacons. This is purely an internal filter
+        input and is NOT the same field as position_events.accuracy_m.
+
+        The returned third value is accuracy_m: the filter's estimated
+        positioning error in meters (derived from the covariance trace),
+        matching the schema's position_events.accuracy_m column. It is a
+        distinct concept from match_confidence on checkpoint_events, which
+        is a face-embedding match score populated elsewhere.
         """
         if self.state is None or self.last_t is None:
             self.state = self._init_state(x_meas, y_meas)
             self.last_t = t
-            return x_meas, y_meas, 0.5  # first reading: no smoothing history yet
+            return x_meas, y_meas, self.measurement_noise ** 0.5  # first reading: no smoothing history yet, report raw sensor noise as the error estimate
 
         dt = max(t - self.last_t, 1e-3)
         self.last_t = t
@@ -87,11 +94,13 @@ class BadgeKalmanFilter:
 
         self.state = KalmanState(x=x_new, P=P_new)
 
-        # Output confidence: shrink with estimate uncertainty (trace of P position block)
+        # accuracy_m: sqrt of the position covariance trace gives an
+        # estimated 1-sigma positioning error in meters - the real quantity
+        # position_events.accuracy_m expects, not a bounded 0-1 score.
         position_uncertainty = np.trace(P_new[:2, :2])
-        out_confidence = float(np.clip(1.0 / (1.0 + position_uncertainty), 0.0, 1.0))
+        accuracy_m = float(np.sqrt(max(position_uncertainty, 0.0)))
 
-        return float(x_new[0]), float(x_new[1]), out_confidence
+        return float(x_new[0]), float(x_new[1]), accuracy_m
 
 
 class PositionFilterRegistry:

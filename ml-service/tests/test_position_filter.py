@@ -6,9 +6,9 @@ from app.models.position_filter import BadgeKalmanFilter, PositionFilterRegistry
 
 def test_first_reading_passes_through():
     f = BadgeKalmanFilter()
-    x, y, conf = f.update(10.0, 5.0, t=0.0)
+    x, y, accuracy_m = f.update(10.0, 5.0, t=0.0)
     assert x == 10.0 and y == 5.0
-    assert 0 <= conf <= 1
+    assert accuracy_m >= 0  # meters-based error estimate, not a 0-1 score
 
 
 def test_smooths_noisy_stationary_badge():
