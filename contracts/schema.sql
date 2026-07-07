@@ -6,7 +6,8 @@
 
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS pgcrypto; -- for gen_random_uuid()
--- CREATE EXTENSION IF NOT EXISTS vector;
+-- CREATE EXTENSION IF NOT EXISTS vector;   -- pgvector NOT included in postgis/postgis image.
+                                            -- Re-enable once a pgvector-capable image/Dockerfile is set up (needed for Phase 5 face_embedding).
 
 -- ------------------------------------------------------------
 -- ENUM TYPES
@@ -18,7 +19,7 @@ CREATE TYPE user_role AS ENUM (
 
 CREATE TYPE alert_type AS ENUM (
     'zone_breach', 'fall_detected', 'inactivity',
-    'panic_button', 'unauthorized_access', 'checkpoint_mismatch'
+    'panic_button', 'unauthorized_access', 'checkpoint_mismatch', 'tag_offline'
 );
 
 CREATE TYPE alert_severity AS ENUM ('info', 'warning', 'critical');
@@ -38,7 +39,7 @@ CREATE TABLE employees (
     keycloak_user_id VARCHAR(100) UNIQUE, -- links to Keycloak identity
     consent_given   BOOLEAN NOT NULL DEFAULT FALSE,
     consent_given_at TIMESTAMPTZ,
-    -- face_embedding  VECTOR(128), -- requires pgvector; add back later
+    -- face_embedding  VECTOR(128), -- requires pgvector extension; add back once installed (Phase 5)
     active          BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -187,4 +188,4 @@ BEGIN
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;
-$$ LANGUAGE plpgsql;    
+$$ LANGUAGE plpgsql;
