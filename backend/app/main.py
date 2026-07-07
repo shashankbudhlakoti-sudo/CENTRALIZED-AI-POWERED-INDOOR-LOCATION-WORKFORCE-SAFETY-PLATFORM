@@ -51,6 +51,14 @@ class CheckpointMatchIn(BaseModel):
     match_status: str  # 'match' | 'mismatch' | 'no_face'
 
 
+class AnomalyDetectIn(BaseModel):
+    alert_type: str  # 'zone_breach' | 'inactivity' | 'tag_offline'
+    employee_id: Optional[UUID] = None
+    tag_id: Optional[UUID] = None
+    zone_id: Optional[UUID] = None
+    details: Optional[dict] = None
+
+
 # ---------- Health ----------
 
 @app.get("/health")
@@ -226,6 +234,48 @@ def list_checkpoints(status: Optional[str] = None, user: CurrentUser = Depends(g
         }
         for r in rows
     ]
+
+
+# ---------- Anomalies (ML service reports, backend owns the alerts write) ----------
+
+VALID_ANOMALY_TYPES = {"zone_breach", "inactivity", "tag_offline"}
+
+# Severity defaults per anomaly type — tune as real-world data comes in.
+ANOMALY_SEVERITY = {
+    "zone_breach": "critical",
+    "inactivity": "warning",
+    "tag_offline": "warning",
+}
+
+
+@app.post("/api/v1/anomalies/detect", status_code=201)
+def report_anomaly(payload: AnomalyDetectIn, db: Session = Depends(get_db)):
+    """Called by the ML service's periodic sweep / real-time detectors.
+    The ML service reports what it detected; the backend decides severity
+    and owns the single write path into `alerts` — same pattern as
+    checkpoint_mismatch. Auth for this endpoint should be the ml-service
+    Keycloak client (client_credentials grant), not a human user token."""
+    if payload.alert_type not in VALID_ANOMALY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "invalid_alert_type", "message": f"alert_type must be one of {sorted(VALID_ANOMALY_TYPES)}"}},
+        )
+
+    alert = models.Alert(
+        alert_type=payload.alert_type,
+        severity=ANOMALY_SEVERITY.get(payload.alert_type, "warning"),
+        employee_id=payload.employee_id,
+        zone_id=payload.zone_id,
+        details={
+            **(payload.details or {}),
+            "tag_id": str(payload.tag_id) if payload.tag_id else None,
+            "reported_by": "ml_service",
+        },
+    )
+    db.add(alert)
+    db.commit()
+    db.refresh(alert)
+    return {"id": str(alert.id), "alert_type": alert.alert_type, "severity": alert.severity}
 
 
 # ---------- WebSocket ----------
