@@ -24,7 +24,7 @@ from app.security.audit import log_action
 from app.models.position_filter import PositionFilterRegistry
 from app.models.train_mode import TrainingWalk, LabeledSample
 from app.models.fingerprinting import FingerprintModel
-from app.models.face_match import find_best_match, is_identity_mismatch
+from app.models.face_match import find_best_match
 from app.services.embedding_backend import EmbeddingGenerator, InsightFaceEmbeddingGenerator
 from app.services.enrolled_embeddings_repo import EnrolledEmbeddingsRepository, PostgresEnrolledEmbeddings
 from app.services.checkpoint_client import patch_checkpoint_match
@@ -196,14 +196,11 @@ async def predict_position(req: PredictRequest, user: AuthenticatedUser = Depend
 # PATCH /checkpoints/{id}/match - it never writes to Postgres directly for
 # this table (same single-write-path pattern as position_events).
 #
-# OPEN QUESTION for Shashank: a confident match whose identity disagrees
-# with the tag's claimed employee (see is_identity_mismatch) is the actual
-# badge-sharing/tailgating signal that alert_type='checkpoint_mismatch' is
-# for - but there's no alerts table schema or creation endpoint in this
-# scaffold yet, so this endpoint only logs that condition (audit_log +
-# structured log) rather than writing an alert. Need to know whether
-# alert creation happens here, on the backend, or in the separate anomaly
-# detection module before wiring that part up for real.
+# Ownership confirmed with Shashank: the backend, not this service, decides
+# whether a result is a badge-sharing/tailgating signal (comparing
+# match_employee_id/match_status against its own tag-assignment record and
+# creating the alerts row itself). This service only ever reports the face
+# match - it doesn't need the alerts schema or tag-assignment table at all.
 # ---------------------------------------------------------------------------
 
 _embedding_generator: EmbeddingGenerator = InsightFaceEmbeddingGenerator()
@@ -213,8 +210,6 @@ _enrolled_repo: EnrolledEmbeddingsRepository = PostgresEnrolledEmbeddings()
 class CheckpointVerifyRequest(BaseModel):
     checkpoint_event_id: str
     zone_id: str
-    tag_id: Optional[str] = None
-    claimed_employee_id: Optional[str] = None  # employee currently assigned to tag_id, if known
     photo_url: str
 
 
@@ -223,7 +218,6 @@ class CheckpointVerifyResult(BaseModel):
     match_employee_id: Optional[str]
     match_confidence: Optional[float]
     match_status: str
-    identity_mismatch: bool  # see OPEN QUESTION above - not yet wired to an alert
 
 
 @app.post(
@@ -243,7 +237,6 @@ async def checkpoint_verify(
     query_embedding = await _embedding_generator.generate(photo_bytes)
     enrolled = await _enrolled_repo.fetch_all()
     result = find_best_match(query_embedding, enrolled)
-    mismatch = is_identity_mismatch(result, req.claimed_employee_id)
 
     await patch_checkpoint_match(
         checkpoint_event_id=req.checkpoint_event_id,
@@ -263,21 +256,9 @@ async def checkpoint_verify(
         justification=f"zone={req.zone_id} status={result.match_status}",
     )
 
-    if mismatch:
-        # Flagged loudly since there's no alert-creation path wired yet -
-        # see OPEN QUESTION above. Do not let this disappear silently into
-        # an info-level log line only.
-        logger.warning(
-            "checkpoint identity mismatch (tailgating signal) zone=%s "
-            "checkpoint_event_id=%s claimed=%s matched=%s - NO ALERT CREATED, "
-            "alert-creation path not yet implemented pending schema/ownership",
-            req.zone_id, req.checkpoint_event_id, req.claimed_employee_id, result.match_employee_id,
-        )
-
     return CheckpointVerifyResult(
         checkpoint_event_id=req.checkpoint_event_id,
         match_employee_id=result.match_employee_id,
         match_confidence=result.match_confidence,
         match_status=result.match_status,
-        identity_mismatch=mismatch,
     )

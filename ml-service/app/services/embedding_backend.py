@@ -37,6 +37,10 @@ class InsightFaceEmbeddingGenerator(EmbeddingGenerator):
     tests that only exercise the interface/matching logic)."""
 
     def __init__(self, model_name: str = "buffalo_l", det_threshold: float = 0.5):
+        # LICENSE NOTE (flagged by Shashank): some InsightFace pretrained
+        # models, including buffalo_l, are non-commercial-use only. Fine for
+        # pilot/dev - confirm licensing terms before any real deployment,
+        # and swap model_name if a commercially-licensed one is needed.
         self._model_name = model_name
         self._det_threshold = det_threshold
         self._app = None  # lazy-loaded insightface.app.FaceAnalysis instance

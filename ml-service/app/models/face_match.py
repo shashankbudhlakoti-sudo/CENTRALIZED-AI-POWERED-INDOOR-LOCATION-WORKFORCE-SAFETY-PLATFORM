@@ -11,10 +11,13 @@ This module answers exactly one question: given a query embedding and a
 list of enrolled (employee_id, embedding) pairs, which employee - if any -
 does the photo match, and how confident is that match?
 
-It does NOT decide alerting. Whether a 'match' result disagrees with the
-tag's claimed identity (the badge-sharing/tailgating signal Shashank
-described) is a separate check the caller does with the result - see the
-open question in main.py about where that alert actually gets created.
+It does NOT decide alerting. Whether a match (or non-match) disagrees with
+the tag's claimed identity - the badge-sharing/tailgating signal - is
+entirely the backend's job: it compares match_employee_id/match_status
+(which this service PATCHes over) against its own record of who tag_id is
+assigned to, and creates the alerts row itself if they disagree. This
+service does not need to know the alerts schema or the tag-assignment
+table - confirmed with Shashank, not a guess.
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -77,20 +80,3 @@ def find_best_match(
     # feature is for. match_confidence still reports the best score found,
     # for audit/debugging/threshold-tuning purposes.
     return MatchResult(match_employee_id=None, match_confidence=best_score, match_status="mismatch")
-
-
-def is_identity_mismatch(result: MatchResult, claimed_employee_id: Optional[str]) -> bool:
-    """
-    The actual tailgating/badge-sharing signal: a CONFIDENT face match that
-    disagrees with who the tag claims is present. This is distinct from
-    match_status='mismatch' (which means no confident match at all).
-
-    Returns False whenever there's no confident match to compare, or no
-    claimed identity to compare against - absence of information is not
-    evidence of a mismatch.
-    """
-    if result.match_status != "match":
-        return False
-    if claimed_employee_id is None:
-        return False
-    return result.match_employee_id != claimed_employee_id

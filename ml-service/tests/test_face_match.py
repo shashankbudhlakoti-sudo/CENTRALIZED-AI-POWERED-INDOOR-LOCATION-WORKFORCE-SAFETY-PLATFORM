@@ -3,10 +3,8 @@ import pytest
 
 from app.models.face_match import (
     EnrolledEmbedding,
-    MatchResult,
     cosine_similarity,
     find_best_match,
-    is_identity_mismatch,
     DEFAULT_MATCH_THRESHOLD,
 )
 
@@ -65,25 +63,3 @@ def test_cosine_similarity_handles_zero_vector():
     zero = np.zeros(512)
     v = _unit_vec(3)
     assert cosine_similarity(zero, v) == 0.0
-
-
-def test_identity_mismatch_true_when_confident_match_disagrees_with_tag():
-    result = MatchResult(match_employee_id="emp-1", match_confidence=0.9, match_status="match")
-    assert is_identity_mismatch(result, claimed_employee_id="emp-2") is True
-
-
-def test_identity_mismatch_false_when_match_agrees_with_tag():
-    result = MatchResult(match_employee_id="emp-1", match_confidence=0.9, match_status="match")
-    assert is_identity_mismatch(result, claimed_employee_id="emp-1") is False
-
-
-def test_identity_mismatch_false_when_no_confident_match():
-    # A 'mismatch' or 'no_face' status means we don't know who this is -
-    # that's not evidence of tag disagreement, just missing information.
-    result = MatchResult(match_employee_id=None, match_confidence=0.3, match_status="mismatch")
-    assert is_identity_mismatch(result, claimed_employee_id="emp-2") is False
-
-
-def test_identity_mismatch_false_when_tag_claim_unknown():
-    result = MatchResult(match_employee_id="emp-1", match_confidence=0.9, match_status="match")
-    assert is_identity_mismatch(result, claimed_employee_id=None) is False
