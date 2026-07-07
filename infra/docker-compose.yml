@@ -42,6 +42,8 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin_dev_pw
     ports:
       - "8080:8080"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
 
   backend:
     build: ../backend
@@ -51,7 +53,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg://safety:safety_dev_pw@db:5432/safety_platform
+      DATABASE_URL: postgresql://safety:safety_dev_pw@db:5432/safety_platform
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       KEYCLOAK_URL: http://keycloak:8080
@@ -65,3 +67,4 @@ volumes:
   db_data:
   mosquitto_data:
   mosquitto_log:
+  keycloak_data:
