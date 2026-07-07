@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="700" viewBox="0 0 1000 700">
+  <defs>
+    <pattern id="grid" width="25" height="25" patternUnits="userSpaceOnUse">
+      <path d="M 25 0 L 0 0 0 25" fill="none" stroke="#1C2A42" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1000" height="700" fill="#0B1220"/>
+  <rect width="1000" height="700" fill="url(#grid)"/>
+  <rect x="40" y="40" width="920" height="620" fill="none" stroke="#2A3A55" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="500" y="360" text-anchor="middle" fill="#3A4D6E" font-family="monospace" font-size="22" letter-spacing="2">
+    NO FLOOR PLAN LOADED — REPLACE WITH REAL SVG/PNG
+  </text>
+  <text x="500" y="390" text-anchor="middle" fill="#2A3A55" font-family="monospace" font-size="14">
+    1000 x 700 placeholder canvas, CRS.Simple coordinates
+  </text>
+</svg>
