@@ -6,7 +6,7 @@
 
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS pgcrypto; -- for gen_random_uuid()
-CREATE EXTENSION IF NOT EXISTS vector;   -- pgvector, for face_embedding (Phase 5)
+-- CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ------------------------------------------------------------
 -- ENUM TYPES
@@ -38,7 +38,7 @@ CREATE TABLE employees (
     keycloak_user_id VARCHAR(100) UNIQUE, -- links to Keycloak identity
     consent_given   BOOLEAN NOT NULL DEFAULT FALSE,
     consent_given_at TIMESTAMPTZ,
-    face_embedding  VECTOR(128), -- requires pgvector; nullable until enrolled
+    -- face_embedding  VECTOR(128), -- requires pgvector; add back later
     active          BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -187,4 +187,4 @@ BEGIN
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;    
