@@ -16,18 +16,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-import asyncpg
-
-DATABASE_URL = os.environ["DATABASE_URL"]
-
-_pool: Optional[asyncpg.Pool] = None
-
-
-async def get_pool() -> asyncpg.Pool:
-    global _pool
-    if _pool is None:
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
-    return _pool
+from app.db import get_pool
 
 
 async def log_action(

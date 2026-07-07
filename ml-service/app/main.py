@@ -28,8 +28,15 @@ from app.models.face_match import find_best_match
 from app.services.embedding_backend import EmbeddingGenerator, InsightFaceEmbeddingGenerator
 from app.services.enrolled_embeddings_repo import EnrolledEmbeddingsRepository, PostgresEnrolledEmbeddings
 from app.services.checkpoint_client import patch_checkpoint_match
+from app.services import zone_repo
+from app.services.anomaly_client import report_anomaly
+from app.services import tag_offline_sweep
+from app.models.anomaly_state import ZoneBreachState, InactivityState
 from typing import Optional
+import asyncio
+import time
 import httpx
+from contextlib import asynccontextmanager
 
 MODEL_DIR = Path(os.environ.get("MODEL_DIR", "/data/models"))
 
@@ -40,7 +47,23 @@ ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").spli
 if not ALLOWED_ORIGINS:
     raise RuntimeError("ALLOWED_ORIGINS must be set explicitly - refusing to default to '*'")
 
-app = FastAPI(title="Indoor Tracking ML Service", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # tag_offline detection runs on a timer, not per-request (see
+    # tag_offline_sweep.py docstring for why) - started alongside the app
+    # and cancelled cleanly on shutdown rather than left as an orphaned task.
+    sweep_task = asyncio.create_task(tag_offline_sweep.run_forever())
+    try:
+        yield
+    finally:
+        sweep_task.cancel()
+        try:
+            await sweep_task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="Indoor Tracking ML Service", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,6 +100,14 @@ class FilteredPosition(BaseModel):
     # (face-match score) - do not conflate the two.
 
 
+_zone_breach_state = ZoneBreachState()
+_inactivity_state = InactivityState()
+
+# Placeholder - needs real calibration once we know how still is "normal"
+# for someone standing at a desk/checkpoint vs. genuinely incapacitated.
+INACTIVITY_THRESHOLD_SECONDS = 300
+
+
 @app.post("/internal/filter-position", response_model=FilteredPosition)
 async def filter_position(
     reading: RawPositionReading,
@@ -89,10 +120,52 @@ async def filter_position(
     ML service), not something the React frontend calls directly. It still
     requires a verified token because the network boundary alone is never
     treated as sufficient authorization.
+
+    Also runs the two real-time anomaly checks (zone_breach, inactivity)
+    synchronously here - this is the one place the ML service sees every
+    position update as it happens. Each check is wrapped so a failure in
+    anomaly detection (DB hiccup, backend unreachable) never breaks the
+    core position-filtering response, which must stay reliable
+    independent of anomaly detection's health. tag_offline is NOT checked
+    here - see tag_offline_sweep.py for why that one needs a timer instead.
     """
     kf = registry.get(reading.tag_id)
     x, y, accuracy_m = kf.update(reading.x_meas, reading.y_meas, reading.timestamp, reading.confidence)
     logger.info("filtered position tag=%s accuracy_m=%.2f", reading.tag_id, accuracy_m)
+
+    try:
+        restricted = await zone_repo.find_restricted_zone_containing(x, y)
+        zone_id = restricted["zone_id"] if restricted else None
+        if _zone_breach_state.check_entry(reading.tag_id, zone_id):
+            employee_id = await zone_repo.get_tag_employee(reading.tag_id)
+            await report_anomaly(
+                alert_type="zone_breach",
+                bearer_token=user.raw_token,
+                employee_id=employee_id,
+                tag_id=reading.tag_id,
+                zone_id=zone_id,
+                details={"zone_name": restricted["name"], "x": x, "y": y},
+            )
+    except Exception:
+        logger.exception(
+            "zone_breach check failed for tag=%s (position filtering still succeeded)", reading.tag_id
+        )
+
+    try:
+        if _inactivity_state.check_inactivity(reading.tag_id, x, y, time.time(), INACTIVITY_THRESHOLD_SECONDS):
+            employee_id = await zone_repo.get_tag_employee(reading.tag_id)
+            await report_anomaly(
+                alert_type="inactivity",
+                bearer_token=user.raw_token,
+                employee_id=employee_id,
+                tag_id=reading.tag_id,
+                details={"x": x, "y": y, "still_for_seconds": INACTIVITY_THRESHOLD_SECONDS},
+            )
+    except Exception:
+        logger.exception(
+            "inactivity check failed for tag=%s (position filtering still succeeded)", reading.tag_id
+        )
+
     return FilteredPosition(tag_id=reading.tag_id, x=x, y=y, accuracy_m=accuracy_m)
 
 
