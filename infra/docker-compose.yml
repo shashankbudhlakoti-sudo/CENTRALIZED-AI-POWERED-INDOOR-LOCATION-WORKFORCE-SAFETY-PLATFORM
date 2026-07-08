@@ -36,7 +36,7 @@ services:
     image: quay.io/keycloak/keycloak:25.0
     container_name: safety-keycloak
     restart: unless-stopped
-    command: start-dev
+    command: start-dev --import-realm
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin_dev_pw
@@ -44,6 +44,7 @@ services:
       - "8080:8080"
     volumes:
       - keycloak_data:/opt/keycloak/data
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
 
   backend:
     build: ../backend
