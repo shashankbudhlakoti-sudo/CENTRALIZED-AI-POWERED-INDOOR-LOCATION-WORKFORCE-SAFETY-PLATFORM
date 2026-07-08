@@ -1,0 +1,155 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  background: #14181f;
+  border-radius: 8px;
+  color: #e4e7ec;
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: #f2f4f7;
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.count {
+  font-size: 12px;
+  color: #7b8494;
+}
+
+.criticalBadge {
+  background: #3a1f1f;
+  color: #f2837e;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.errorBanner {
+  background: #3a1f1f;
+  border: 1px solid #5c2e2e;
+  color: #f2b8b5;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.emptyState {
+  padding: 24px 0;
+  text-align: center;
+  color: #6b7280;
+  font-size: 13.5px;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #1a1f28;
+  border: 1px solid #262d38;
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-info {
+  background: #6d9bf7;
+}
+
+.dot-warning {
+  background: #f2c94c;
+}
+
+.dot-critical {
+  background: #f2837e;
+}
+
+.rowBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rowTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.typeLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e4e7ec;
+}
+
+.timestamp {
+  font-size: 11px;
+  color: #7b8494;
+  white-space: nowrap;
+}
+
+.details {
+  font-size: 12px;
+  color: #9aa4b2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ackButton {
+  flex-shrink: 0;
+  background: #1e242e;
+  border: 1px solid #3b4b66;
+  color: #cbd2dc;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.ackButton:hover:not(:disabled) {
+  background: #263040;
+}
+
+.ackButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

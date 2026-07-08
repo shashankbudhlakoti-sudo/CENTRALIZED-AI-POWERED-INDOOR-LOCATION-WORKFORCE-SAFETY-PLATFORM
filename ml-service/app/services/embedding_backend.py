@@ -1,22 +1,17 @@
 """
 Turns a photo into a face embedding vector.
 
-MODEL CHOICE FLAGGED FOR TEAM CONFIRMATION: no face-embedding library was
-already decided, so this defaults to InsightFace (ONNX runtime) - chosen
-because the spec says "on-device" (rules out cloud APIs like Rekognition/
-Azure Face), and dlib-based alternatives (e.g. the `face_recognition`
-package) are painful to install on Windows dev machines (native compile
-step via CMake/Visual Studio). InsightFace ships prebuilt ONNX models and
-runs via onnxruntime with no compile step.
+MODEL/LIBRARY CHOICE: InsightFace (buffalo_l, via onnxruntime), confirmed
+with Shashank - chosen because the spec says "on-device" (rules out cloud
+APIs like Rekognition/Azure Face). Confirmed working end-to-end on Windows
+dev machines using a prebuilt community wheel (no official Windows wheel
+exists, and building from source needs the MSVC C++ toolchain) - see
+requirements.txt for the install command. License note: buffalo_l is
+non-commercial-use only, fine for pilot/dev, revisit before real deployment.
 
-If the team picks something else, only this file needs to change - callers
-depend on the EmbeddingGenerator interface, not on InsightFace directly.
-
-NOT YET RUNNABLE END-TO-END: requires `pip install insightface onnxruntime`
-(not yet in requirements.txt - add once the model choice is confirmed) and
-downloads model weights on first run. The interface and the pure matching
-logic in face_match.py are usable and tested today; this file is the piece
-that needs the real dependency installed to exercise for real.
+If the team wants a different model, only this file needs to change -
+callers depend on the EmbeddingGenerator interface, not on InsightFace
+directly.
 """
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -37,10 +32,10 @@ class InsightFaceEmbeddingGenerator(EmbeddingGenerator):
     tests that only exercise the interface/matching logic)."""
 
     def __init__(self, model_name: str = "buffalo_l", det_threshold: float = 0.5):
-        # LICENSE NOTE (flagged by Shashank): some InsightFace pretrained
-        # models, including buffalo_l, are non-commercial-use only. Fine for
-        # pilot/dev - confirm licensing terms before any real deployment,
-        # and swap model_name if a commercially-licensed one is needed.
+        # LICENSE NOTE (flagged by Shashank): buffalo_l is non-commercial-use
+        # only. Fine for pilot/dev - confirm licensing terms before any real
+        # deployment, and swap model_name if a commercially-licensed one is
+        # needed instead.
         self._model_name = model_name
         self._det_threshold = det_threshold
         self._app = None  # lazy-loaded insightface.app.FaceAnalysis instance
@@ -48,14 +43,7 @@ class InsightFaceEmbeddingGenerator(EmbeddingGenerator):
     def _ensure_loaded(self):
         if self._app is not None:
             return
-        try:
-            from insightface.app import FaceAnalysis
-        except ImportError as exc:
-            raise RuntimeError(
-                "insightface is not installed. This is expected until the "
-                "team confirms the embedding model and it's added to "
-                "requirements.txt - see module docstring."
-            ) from exc
+        from insightface.app import FaceAnalysis
 
         self._app = FaceAnalysis(name=self._model_name)
         self._app.prepare(ctx_id=0, det_thresh=self._det_threshold)
@@ -83,9 +71,9 @@ class InsightFaceEmbeddingGenerator(EmbeddingGenerator):
 
 
 class StubEmbeddingGenerator(EmbeddingGenerator):
-    """Deterministic stand-in for tests and local dev before InsightFace is
-    wired up. Returns a fixed embedding derived from the byte content so
-    tests can exercise the full endpoint flow without real model weights."""
+    """Deterministic stand-in for tests and local dev - avoids needing
+    real model weights loaded just to exercise the endpoint flow. Returns
+    a fixed embedding derived from the byte content."""
 
     async def generate(self, photo_bytes: bytes) -> Optional[np.ndarray]:
         if not photo_bytes:
