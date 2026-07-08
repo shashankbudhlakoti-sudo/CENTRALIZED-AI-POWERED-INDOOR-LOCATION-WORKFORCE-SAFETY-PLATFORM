@@ -1,0 +1,15 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+python-jose[cryptography]==3.3.0
+httpx==0.27.2
+asyncpg==0.29.0
+numpy==1.26.4
+pytest==8.3.3
+scikit-learn==1.5.2
+joblib==1.4.2
+# Checkpoint verification (confirmed with Shashank) - buffalo_l model is
+# non-commercial-use only, fine for pilot/dev, revisit before real deployment.
+insightface==0.7.3
+onnxruntime==1.19.2
+opencv-python-headless==4.10.0.84
