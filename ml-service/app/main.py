@@ -335,3 +335,81 @@ async def checkpoint_verify(
         match_confidence=result.match_confidence,
         match_status=result.match_status,
     )
+
+
+# ---------------------------------------------------------------------------
+# Face enrollment (employees.face_embedding)
+#
+# PROPOSED design, NOT YET CONFIRMED with Shashank - unlike every other
+# write-path pattern in this file, this one hasn't been discussed with him
+# yet. Flagging the open decisions rather than silently picking one:
+#
+# 1. Role gate: allowing BOTH security_admin and hr_manager for now, since
+#    it's genuinely unclear which should own enrollment. Narrow this once
+#    he decides - see require_role's multi-role support added for this.
+# 2. Re-enrollment: this endpoint always generates and returns a fresh
+#    embedding: it doesn't know or care whether employee_id already has
+#    one. Overwrite-vs-reject on re-enrollment is the BACKEND's decision
+#    when it writes employees.face_embedding, not something this service
+#    can decide since it never reads or writes that table itself.
+# 3. Who captures the enrollment photo (HR onboarding flow? manual admin
+#    upload?) is entirely a backend/frontend workflow question - this
+#    endpoint only needs a photo_url, however it got there.
+#
+# Reuses the exact same EmbeddingGenerator as checkpoint verification - no
+# new face-processing code, just a thin endpoint + audit logging. This
+# service never writes to employees.face_embedding directly - same
+# single-write-path pattern as positions/checkpoints/alerts: the backend
+# takes this response and owns the actual write.
+# ---------------------------------------------------------------------------
+
+
+class EnrollFaceRequest(BaseModel):
+    employee_id: str
+    photo_url: str
+
+
+class EnrollFaceResult(BaseModel):
+    employee_id: str
+    status: str  # 'enrolled' | 'no_face'
+    embedding: Optional[list[float]] = None
+
+
+@app.post(
+    "/internal/enroll-face",
+    response_model=EnrollFaceResult,
+    dependencies=[Depends(require_role("security_admin", "hr_manager"))],
+)
+async def enroll_face(
+    req: EnrollFaceRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        photo_resp = await client.get(req.photo_url)
+        photo_resp.raise_for_status()
+        photo_bytes = photo_resp.content
+
+    embedding = await _embedding_generator.generate(photo_bytes)
+
+    # Enrollment writes biometric data to a specific employee's record -
+    # logged regardless of outcome, same as checkpoint_verify. actor_role
+    # reflects whichever of the two allowed roles this caller actually
+    # has (security_admin preferred if they somehow have both).
+    actor_role = "security_admin" if user.has_role("security_admin") else "hr_manager"
+    await log_action(
+        actor_user_id=user.sub,
+        actor_role=actor_role,
+        action="enroll_face",
+        resource_type="employees",
+        resource_id=req.employee_id,
+        justification="face enrollment" if embedding is not None else "face enrollment failed: no face detected",
+    )
+
+    if embedding is None:
+        return EnrollFaceResult(employee_id=req.employee_id, status="no_face", embedding=None)
+
+    return EnrollFaceResult(
+        employee_id=req.employee_id,
+        status="enrolled",
+        embedding=embedding.tolist(),
+    )

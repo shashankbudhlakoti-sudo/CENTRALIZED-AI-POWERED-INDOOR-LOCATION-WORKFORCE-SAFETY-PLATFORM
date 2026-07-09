@@ -115,16 +115,20 @@ async def get_current_user(
     return AuthenticatedUser(sub=claims["sub"], roles=roles, raw_claims=claims, raw_token=token)
 
 
-def require_role(role: str):
+def require_role(*allowed_roles: str):
     """Dependency factory for endpoint-level role checks, e.g.:
     @router.post("/checkpoint/verify", dependencies=[Depends(require_role("security_admin"))])
+
+    Accepts multiple roles when any one of them should be allowed, e.g.
+    require_role("security_admin", "hr_manager") - added for face
+    enrollment, where it's genuinely unclear yet which role should own it.
     """
 
     async def _checker(user: AuthenticatedUser = Depends(get_current_user)) -> AuthenticatedUser:
-        if not user.has_role(role):
+        if not any(user.has_role(r) for r in allowed_roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Requires role: {role}",
+                detail=f"Requires one of roles: {', '.join(allowed_roles)}",
             )
         return user
 
