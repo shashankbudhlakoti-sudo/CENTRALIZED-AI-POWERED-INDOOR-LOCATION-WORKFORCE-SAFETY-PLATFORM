@@ -3,6 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -12,6 +13,22 @@ from app import models
 from app.auth import get_current_user, CurrentUser
 
 app = FastAPI(title="Indoor Location & Workforce Safety Platform API", version="0.1.0")
+
+# CORS: allow local frontend dev servers to call this API from the browser.
+# Vite defaults to 5173, Create React App to 3000 — allow both for now.
+# Tighten this to the real deployed frontend origin before any real deployment.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------- Pydantic schemas (mirrors contracts/api-spec.md) ----------
