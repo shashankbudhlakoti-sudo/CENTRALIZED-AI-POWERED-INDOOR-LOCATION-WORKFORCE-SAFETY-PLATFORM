@@ -1,7 +1,7 @@
 import os
 from fastapi import Header, HTTPException
 from jose import jwt, JWTError
-1123456
+
 KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://localhost:8080")
 KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "safety-platform")
 
