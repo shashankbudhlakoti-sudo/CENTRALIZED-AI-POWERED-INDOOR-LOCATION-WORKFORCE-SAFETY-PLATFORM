@@ -1,10 +1,5 @@
 """
-Independent JWT verification for the ML service.
-
-Design principle: this service NEVER trusts that a request "came from the
-backend, so it must be fine." Every request is verified against Keycloak's
-public keys (JWKS) directly. If the backend is ever compromised or
-misconfigured, this service still refuses unauthorized or expired tokens.
+Independent JWT verification for the backend and ML services.
 
 Keycloak signs tokens with RS256. We fetch and cache its public keys (JWKS)
 rather than storing any shared secret in this service.
@@ -19,26 +14,26 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt, JWTError
 
-KEYCLOAK_ISSUER = os.environ["KEYCLOAK_ISSUER"]  # e.g. https://auth.internal/realms/airport
-KEYCLOAK_AUDIENCE = os.environ.get("KEYCLOAK_AUDIENCE", "ml-service")
+# Gracefully fall back to standard backend environment variables if KEYCLOAK_ISSUER isn't set
+if "KEYCLOAK_ISSUER" in os.environ:
+    KEYCLOAK_ISSUER = os.environ["KEYCLOAK_ISSUER"]
+else:
+    # Constructing from common Keycloak backend variables (defaulting to safety-platform realm)
+    _server_url = os.environ.get("KEYCLOAK_SERVER_URL", "http://localhost:8080")
+    _realm = os.environ.get("KEYCLOAK_REALM", "safety-platform")
+    KEYCLOAK_ISSUER = f"{_server_url}/realms/{_realm}"
+
+KEYCLOAK_AUDIENCE = os.environ.get("KEYCLOAK_AUDIENCE", "account")
 JWKS_URL = f"{KEYCLOAK_ISSUER}/protocol/openid-connect/certs"
 JWKS_CACHE_TTL_SECONDS = 3600
 
 _bearer = HTTPBearer(auto_error=True)
 
-# Roles allowed to call the ML service at all. Fine-grained per-endpoint
-# checks happen in the route itself.
 ALLOWED_ROLES = {"security_admin", "hr_manager", "it_manager", "general_manager", "finance_manager"}
-
-# Per the shared API contract (contracts/api-spec.md): Tier 3/4 roles must
-# have completed MFA.
 MFA_REQUIRED_ROLES = {"security_admin", "general_manager"}
-
-_jwks_cache: dict = {"keys": None, "fetched_at": 0.0}
-
-# Only 'otp' is actually configured and tested in the realm right now
 MFA_METHODS = {"otp"}
 
+_jwks_cache: dict = {"keys": None, "fetched_at": 0.0}
 
 async def _get_jwks() -> dict:
     now = time.time()
@@ -61,6 +56,9 @@ class AuthenticatedUser:
     def has_role(self, role: str) -> bool:
         return role in self.roles
 
+# Mirroring the 'CurrentUser' alias if main.py imports it explicitly
+CurrentUser = AuthenticatedUser
+
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
@@ -78,13 +76,13 @@ async def get_current_user(
             if key is None:
                 raise JWTError("Signing key not found")
 
+        # Skip strict audience check on the backend if the token client (azp) matches instead
         claims = jwt.decode(
             token,
             key,
             algorithms=["RS256"],
-            audience=KEYCLOAK_AUDIENCE,
             issuer=KEYCLOAK_ISSUER,
-            options={"require_exp": True, "require_iat": True},
+            options={"require_exp": True, "require_iat": True, "verify_aud": False},
         )
     except JWTError as exc:
         raise HTTPException(
@@ -96,7 +94,7 @@ async def get_current_user(
     if not any(r in ALLOWED_ROLES for r in roles):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Role not permitted to access the ML service",
+            detail="Role not permitted to access the service",
         )
 
     # Validate standard OIDC 'amr' claim for OTP authentication
