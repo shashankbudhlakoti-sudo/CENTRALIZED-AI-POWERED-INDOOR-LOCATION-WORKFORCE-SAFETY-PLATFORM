@@ -34,4 +34,19 @@ export const initAuth = () => {
   return initPromise;
 };
 
+// Required helper utilities imported by App, apiClient, and SecurityPanel
+export const getToken = () => {
+  return keycloak.token || "";
+};
+
+export const getRoles = () => {
+  return keycloak.tokenParsed?.realm_access?.roles || [];
+};
+
+export const logout = () => {
+  isInitialized = false;
+  initPromise = null;
+  keycloak.logout({ redirectUri: window.location.origin });
+};
+
 export default keycloak;
