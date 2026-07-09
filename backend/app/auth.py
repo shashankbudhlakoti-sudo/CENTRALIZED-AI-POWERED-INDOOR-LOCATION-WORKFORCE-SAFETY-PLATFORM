@@ -27,17 +27,17 @@ JWKS_CACHE_TTL_SECONDS = 3600
 _bearer = HTTPBearer(auto_error=True)
 
 # Roles allowed to call the ML service at all. Fine-grained per-endpoint
-# checks happen in the route itself (e.g. only security_admin can call
-# checkpoint verification).
-ALLOWED_ROLES = {"security_admin", "hr_manager", "it_manager", "general_manager"}
+# checks happen in the route itself.
+ALLOWED_ROLES = {"security_admin", "hr_manager", "it_manager", "general_manager", "finance_manager"}
 
 # Per the shared API contract (contracts/api-spec.md): Tier 3/4 roles must
-# have completed MFA. The backend enforces this too, but this service does
-# not trust that enforcement happened upstream - same "verify everything
-# independently" principle as JWT verification itself.
+# have completed MFA.
 MFA_REQUIRED_ROLES = {"security_admin", "general_manager"}
 
 _jwks_cache: dict = {"keys": None, "fetched_at": 0.0}
+
+# Only 'otp' is actually configured and tested in the realm right now
+MFA_METHODS = {"otp"}
 
 
 async def _get_jwks() -> dict:
@@ -56,10 +56,7 @@ class AuthenticatedUser:
         self.sub = sub
         self.roles = roles
         self.raw_claims = raw_claims
-        self.raw_token = raw_token  # forwarded when this service itself calls
-        # the backend (e.g. PATCH /checkpoints/{id}/match) - reuses the
-        # caller's own Keycloak session rather than minting a separate
-        # service credential, since it's the same realm/audience.
+        self.raw_token = raw_token
 
     def has_role(self, role: str) -> bool:
         return role in self.roles
@@ -75,7 +72,6 @@ async def get_current_user(
         unverified_header = jwt.get_unverified_header(token)
         key = next((k for k in jwks["keys"] if k["kid"] == unverified_header.get("kid")), None)
         if key is None:
-            # Key rotated since our cache was populated - force a refresh once.
             _jwks_cache["keys"] = None
             jwks = await _get_jwks()
             key = next((k for k in jwks["keys"] if k["kid"] == unverified_header.get("kid")), None)
@@ -103,23 +99,20 @@ async def get_current_user(
             detail="Role not permitted to access the ML service",
         )
 
-    # Independent MFA check for Tier 3/4 roles (contracts/api-spec.md).
-    # A security_admin or general_manager token without acr=mfa is rejected
-    # here even if the backend somehow let it through.
-    if any(r in MFA_REQUIRED_ROLES for r in roles) and claims.get("acr") != "mfa":
+    # Validate standard OIDC 'amr' claim for OTP authentication
+    amr = set(claims.get("amr", []))
+    mfa_verified = bool(amr & MFA_METHODS)
+
+    if any(r in MFA_REQUIRED_ROLES for r in roles) and not mfa_verified:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="MFA required for this role",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": "mfa_required", "message": "MFA required for this role"}},
         )
 
     return AuthenticatedUser(sub=claims["sub"], roles=roles, raw_claims=claims, raw_token=token)
 
 
 def require_role(role: str):
-    """Dependency factory for endpoint-level role checks, e.g.:
-    @router.post("/checkpoint/verify", dependencies=[Depends(require_role("security_admin"))])
-    """
-
     async def _checker(user: AuthenticatedUser = Depends(get_current_user)) -> AuthenticatedUser:
         if not user.has_role(role):
             raise HTTPException(
@@ -127,21 +120,12 @@ def require_role(role: str):
                 detail=f"Requires role: {role}",
             )
         return user
-
     return _checker
 
 
-# Contract (contracts/api-spec.md): Tier 3/4 roles (security_admin,
-# general_manager) require MFA - backend rejects tokens without it on
-# protected endpoints. The ML service enforces this independently too,
-# rather than trusting that the backend already checked - the same
-# defense-in-depth principle as verifying the JWT signature ourselves.
-MFA_REQUIRED_ROLES = {"security_admin", "general_manager"}
-
-
 async def require_mfa(user: AuthenticatedUser = Depends(get_current_user)) -> AuthenticatedUser:
-    needs_mfa = any(r in MFA_REQUIRED_ROLES for r in user.roles)
-    if needs_mfa and user.raw_claims.get("acr") != "mfa":
+    amr = set(user.raw_claims.get("amr", []))
+    if any(r in MFA_REQUIRED_ROLES for r in user.roles) and not (amr & MFA_METHODS):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This role requires MFA - token was not issued with a multi-factor session",
