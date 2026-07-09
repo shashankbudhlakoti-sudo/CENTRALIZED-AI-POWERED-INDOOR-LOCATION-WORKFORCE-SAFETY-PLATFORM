@@ -14,17 +14,15 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt, JWTError
 
-# Gracefully fall back to standard backend environment variables if KEYCLOAK_ISSUER isn't set
-if "KEYCLOAK_ISSUER" in os.environ:
-    KEYCLOAK_ISSUER = os.environ["KEYCLOAK_ISSUER"]
-else:
-    # Constructing from common Keycloak backend variables (defaulting to safety-platform realm)
-    _server_url = os.environ.get("KEYCLOAK_SERVER_URL", "http://localhost:8080")
-    _realm = os.environ.get("KEYCLOAK_REALM", "safety-platform")
-    KEYCLOAK_ISSUER = f"{_server_url}/realms/{_realm}"
+# Hardcode the precise token issuer representation
+KEYCLOAK_ISSUER = "http://localhost:8080/realms/safety-platform"
+
+# Force the container network routing to check the host bridge endpoint
+_server_url = "http://host.docker.internal:8080"
+_realm = "safety-platform"
+JWKS_URL = f"{_server_url}/realms/{_realm}/protocol/openid-connect/certs"
 
 KEYCLOAK_AUDIENCE = os.environ.get("KEYCLOAK_AUDIENCE", "account")
-JWKS_URL = f"{KEYCLOAK_ISSUER}/protocol/openid-connect/certs"
 JWKS_CACHE_TTL_SECONDS = 3600
 
 _bearer = HTTPBearer(auto_error=True)
@@ -56,7 +54,6 @@ class AuthenticatedUser:
     def has_role(self, role: str) -> bool:
         return role in self.roles
 
-# Mirroring the 'CurrentUser' alias if main.py imports it explicitly
 CurrentUser = AuthenticatedUser
 
 
@@ -76,7 +73,6 @@ async def get_current_user(
             if key is None:
                 raise JWTError("Signing key not found")
 
-        # Skip strict audience check on the backend if the token client (azp) matches instead
         claims = jwt.decode(
             token,
             key,
@@ -97,7 +93,6 @@ async def get_current_user(
             detail="Role not permitted to access the service",
         )
 
-    # Validate standard OIDC 'amr' claim for OTP authentication
     amr = set(claims.get("amr", []))
     mfa_verified = bool(amr & MFA_METHODS)
 
