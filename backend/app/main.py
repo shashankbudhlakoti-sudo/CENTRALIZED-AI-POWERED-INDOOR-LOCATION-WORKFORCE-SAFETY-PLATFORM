@@ -3,6 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -12,6 +13,22 @@ from app import models
 from app.auth import get_current_user, CurrentUser
 
 app = FastAPI(title="Indoor Location & Workforce Safety Platform API", version="0.1.0")
+
+# CORS: allow local frontend dev servers to call this API from the browser.
+# Vite defaults to 5173, Create React App to 3000 — allow both for now.
+# Tighten this to the real deployed frontend origin before any real deployment.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------- Pydantic schemas (mirrors contracts/api-spec.md) ----------
@@ -36,6 +53,27 @@ class PositionIn(BaseModel):
 
 class AlertAck(BaseModel):
     note: Optional[str] = None
+
+
+class CheckpointIn(BaseModel):
+    zone_id: UUID
+    tag_id: Optional[UUID] = None
+    employee_id: Optional[UUID] = None
+    photo_url: str
+
+
+class CheckpointMatchIn(BaseModel):
+    match_employee_id: Optional[UUID] = None
+    match_confidence: Optional[float] = None
+    match_status: str  # 'match' | 'mismatch' | 'no_face'
+
+
+class AnomalyDetectIn(BaseModel):
+    alert_type: str  # 'zone_breach' | 'inactivity' | 'tag_offline'
+    employee_id: Optional[UUID] = None
+    tag_id: Optional[UUID] = None
+    zone_id: Optional[UUID] = None
+    details: Optional[dict] = None
 
 
 # ---------- Health ----------
@@ -134,6 +172,127 @@ def acknowledge_alert(alert_id: UUID, payload: AlertAck, user: CurrentUser = Dep
     alert.acknowledged_at = datetime.utcnow()
     db.commit()
     return {"status": "acknowledged"}
+
+
+# ---------- Checkpoints (shared feature — split seam) ----------
+
+@app.post("/api/v1/checkpoints", status_code=201)
+def create_checkpoint(payload: CheckpointIn, db: Session = Depends(get_db)):
+    """Track A: called by the camera-trigger service when someone passes a checkpoint.
+    Creates the row with match_status='pending'; Track B's face-match service
+    fills in the result afterward via PATCH /checkpoints/{id}/match."""
+    cp = models.CheckpointEvent(**payload.model_dump())
+    db.add(cp)
+    db.commit()
+    db.refresh(cp)
+    return {"id": str(cp.id), "match_status": cp.match_status}
+
+
+@app.patch("/api/v1/checkpoints/{checkpoint_id}/match")
+def update_checkpoint_match(checkpoint_id: UUID, payload: CheckpointMatchIn, db: Session = Depends(get_db)):
+    """Track B (ML service) calls this with the face-match result.
+    The backend — not the ML service — decides whether this disagreement
+    warrants an alert, and owns the single write path into `alerts`."""
+    cp = db.get(models.CheckpointEvent, checkpoint_id)
+    if not cp:
+        raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Checkpoint event not found"}})
+
+    cp.match_employee_id = payload.match_employee_id
+    cp.match_confidence = payload.match_confidence
+    cp.match_status = payload.match_status
+    cp.resolved_at = datetime.utcnow()
+
+    # Decide, server-side, whether this is a mismatch worth alerting on:
+    # either the face-match explicitly failed, or it succeeded but disagrees
+    # with who the tag is actually assigned to (possible badge sharing/tailgating).
+    tag_owner_id = None
+    if cp.tag_id:
+        tag = db.get(models.Tag, cp.tag_id)
+        tag_owner_id = tag.employee_id if tag else None
+
+    is_mismatch = (
+        payload.match_status in ("mismatch", "no_face")
+        or (payload.match_status == "match" and tag_owner_id is not None and payload.match_employee_id != tag_owner_id)
+    )
+
+    if is_mismatch:
+        alert = models.Alert(
+            alert_type="checkpoint_mismatch",
+            severity="critical" if payload.match_status != "no_face" else "warning",
+            employee_id=tag_owner_id or payload.match_employee_id,
+            zone_id=cp.zone_id,
+            details={
+                "checkpoint_event_id": str(cp.id),
+                "match_status": payload.match_status,
+                "match_confidence": payload.match_confidence,
+                "match_employee_id": str(payload.match_employee_id) if payload.match_employee_id else None,
+                "tag_owner_employee_id": str(tag_owner_id) if tag_owner_id else None,
+            },
+        )
+        db.add(alert)
+
+    db.commit()
+    return {"status": "updated", "alert_created": is_mismatch}
+
+
+@app.get("/api/v1/checkpoints")
+def list_checkpoints(status: Optional[str] = None, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    set_rls_context(db, user.department, user.role)
+    q = select(models.CheckpointEvent)
+    if status:
+        q = q.where(models.CheckpointEvent.match_status == status)
+    rows = db.execute(q.order_by(models.CheckpointEvent.triggered_at.desc())).scalars().all()
+    return [
+        {
+            "id": str(r.id), "zone_id": str(r.zone_id), "photo_url": r.photo_url,
+            "match_status": r.match_status, "match_confidence": r.match_confidence,
+            "match_employee_id": str(r.match_employee_id) if r.match_employee_id else None,
+            "triggered_at": r.triggered_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+# ---------- Anomalies (ML service reports, backend owns the alerts write) ----------
+
+VALID_ANOMALY_TYPES = {"zone_breach", "inactivity", "tag_offline"}
+
+# Severity defaults per anomaly type — tune as real-world data comes in.
+ANOMALY_SEVERITY = {
+    "zone_breach": "critical",
+    "inactivity": "warning",
+    "tag_offline": "warning",
+}
+
+
+@app.post("/api/v1/anomalies/detect", status_code=201)
+def report_anomaly(payload: AnomalyDetectIn, db: Session = Depends(get_db)):
+    """Called by the ML service's periodic sweep / real-time detectors.
+    The ML service reports what it detected; the backend decides severity
+    and owns the single write path into `alerts` — same pattern as
+    checkpoint_mismatch. Auth for this endpoint should be the ml-service
+    Keycloak client (client_credentials grant), not a human user token."""
+    if payload.alert_type not in VALID_ANOMALY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "invalid_alert_type", "message": f"alert_type must be one of {sorted(VALID_ANOMALY_TYPES)}"}},
+        )
+
+    alert = models.Alert(
+        alert_type=payload.alert_type,
+        severity=ANOMALY_SEVERITY.get(payload.alert_type, "warning"),
+        employee_id=payload.employee_id,
+        zone_id=payload.zone_id,
+        details={
+            **(payload.details or {}),
+            "tag_id": str(payload.tag_id) if payload.tag_id else None,
+            "reported_by": "ml_service",
+        },
+    )
+    db.add(alert)
+    db.commit()
+    db.refresh(alert)
+    return {"id": str(alert.id), "alert_type": alert.alert_type, "severity": alert.severity}
 
 
 # ---------- WebSocket ----------
