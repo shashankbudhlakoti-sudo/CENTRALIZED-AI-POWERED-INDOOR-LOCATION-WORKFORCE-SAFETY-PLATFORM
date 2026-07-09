@@ -19,7 +19,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt, JWTError
 
-KEYCLOAK_ISSUER = os.environ["KEYCLOAK_ISSUER"]  # e.g. https://auth.internal/realms/airport
+KEYCLOAK_ISSUER = os.environ["KEYCLOAK_ISSUER"]  # e.g. http://localhost:8080/realms/safety-platform
 KEYCLOAK_AUDIENCE = os.environ.get("KEYCLOAK_AUDIENCE", "ml-service")
 JWKS_URL = f"{KEYCLOAK_ISSUER}/protocol/openid-connect/certs"
 JWKS_CACHE_TTL_SECONDS = 3600
@@ -35,9 +35,28 @@ ALLOWED_ROLES = {"security_admin", "hr_manager", "it_manager", "general_manager"
 # have completed MFA. The backend enforces this too, but this service does
 # not trust that enforcement happened upstream - same "verify everything
 # independently" principle as JWT verification itself.
+# Defined once, here, and used by both get_current_user and require_mfa
+# below - previously duplicated in two places, which is exactly how they
+# could've silently drifted out of sync with each other.
 MFA_REQUIRED_ROLES = {"security_admin", "general_manager"}
 
+# Shared with backend/app/auth.py - keep both in sync when adding new MFA
+# methods. Only 'otp' is actually configured and tested in the realm right
+# now - don't add a method here until it's real, not just planned.
+MFA_METHODS = {"otp"}
+
 _jwks_cache: dict = {"keys": None, "fetched_at": 0.0}
+
+
+def _has_mfa(claims: dict) -> bool:
+    """amr (Authentication Methods References) is a standard OIDC claim
+    listing which auth methods were actually used - e.g. ["pwd"] or
+    ["pwd", "otp"]. Using this instead of acr avoids needing a custom
+    ACR-to-LoA mapping configured in the realm, and is more portable if
+    the IdP ever changes. Single source of truth for both call sites
+    below, so there's only one place to update if the check changes."""
+    amr = set(claims.get("amr", []))
+    return bool(amr & MFA_METHODS)
 
 
 async def _get_jwks() -> dict:
@@ -104,9 +123,9 @@ async def get_current_user(
         )
 
     # Independent MFA check for Tier 3/4 roles (contracts/api-spec.md).
-    # A security_admin or general_manager token without acr=mfa is rejected
-    # here even if the backend somehow let it through.
-    if any(r in MFA_REQUIRED_ROLES for r in roles) and claims.get("acr") != "mfa":
+    # A security_admin or general_manager token without a real MFA method
+    # in `amr` is rejected here even if the backend somehow let it through.
+    if any(r in MFA_REQUIRED_ROLES for r in roles) and not _has_mfa(claims):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="MFA required for this role",
@@ -135,19 +154,15 @@ def require_role(*allowed_roles: str):
     return _checker
 
 
-# Contract (contracts/api-spec.md): Tier 3/4 roles (security_admin,
-# general_manager) require MFA - backend rejects tokens without it on
-# protected endpoints. The ML service enforces this independently too,
-# rather than trusting that the backend already checked - the same
-# defense-in-depth principle as verifying the JWT signature ourselves.
-MFA_REQUIRED_ROLES = {"security_admin", "general_manager"}
-
-
 async def require_mfa(user: AuthenticatedUser = Depends(get_current_user)) -> AuthenticatedUser:
-    needs_mfa = any(r in MFA_REQUIRED_ROLES for r in user.roles)
-    if needs_mfa and user.raw_claims.get("acr") != "mfa":
+    """Note: get_current_user above already enforces MFA for every request
+    from a Tier 3/4 role, so this dependency is currently redundant for
+    those roles specifically - kept as an explicit, readable guard for any
+    endpoint that wants to require MFA regardless of role (e.g. a
+    lower-tier role performing an unusually sensitive action)."""
+    if not _has_mfa(user.raw_claims):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="This role requires MFA - token was not issued with a multi-factor session",
+            detail="This endpoint requires MFA - token was not issued with a multi-factor session",
         )
     return user

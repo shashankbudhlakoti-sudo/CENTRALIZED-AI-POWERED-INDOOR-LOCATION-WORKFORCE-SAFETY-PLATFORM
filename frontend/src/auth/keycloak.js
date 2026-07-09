@@ -27,8 +27,9 @@ export async function initAuth() {
   });
 
   if (authenticated) {
+    console.log("Token claims:", keycloak.tokenParsed);
     scheduleRefresh();
-  }
+}
 
   return authenticated;
 }
