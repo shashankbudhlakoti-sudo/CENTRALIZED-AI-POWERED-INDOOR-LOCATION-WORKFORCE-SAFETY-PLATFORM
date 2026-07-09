@@ -6,11 +6,9 @@ never writes to alerts directly.
 """
 import os
 from typing import Optional
-
 import httpx
 
-BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://backend.internal")
-
+BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://backend.internal").rstrip("/")
 
 async def report_anomaly(
     alert_type: str,

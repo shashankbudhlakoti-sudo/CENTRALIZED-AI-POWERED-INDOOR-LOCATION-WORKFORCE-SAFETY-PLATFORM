@@ -6,20 +6,17 @@ service owns match_employee_id, match_confidence, match_status and never
 writes to Postgres for this table directly.
 """
 import os
-
 import httpx
-
 from app.models.face_match import MatchResult
 
-BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://backend.internal")
-
+BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://backend.internal").rstrip("/")
 
 async def patch_checkpoint_match(
     checkpoint_event_id: str,
     result: MatchResult,
     service_token: str,
 ) -> None:
-    url = f"{BACKEND_BASE_URL}/checkpoints/{checkpoint_event_id}/match"
+    url = f"{BACKEND_BASE_URL}/api/v1/checkpoints/{checkpoint_event_id}/match"
     payload = {
         "match_employee_id": result.match_employee_id,
         "match_confidence": result.match_confidence,
