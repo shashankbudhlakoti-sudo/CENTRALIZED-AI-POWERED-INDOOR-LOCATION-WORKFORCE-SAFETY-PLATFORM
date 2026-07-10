@@ -1,0 +1,206 @@
+.page {
+  padding: 24px;
+  background: #0B1220;
+  min-height: 100vh;
+  color: #E7ECF5;
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+.header {
+  margin-bottom: 24px;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+}
+
+.subtitle {
+  color: #7B879E;
+  font-size: 14px;
+  margin: 0;
+}
+
+/* ---------- summary cards (Manager dashboard, top of IT/Finance) ---------- */
+
+.summaryRow {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.summaryCard {
+  background: #121A2B;
+  border: 1px solid #2A3A55;
+  border-radius: 8px;
+  padding: 14px 18px;
+  min-width: 140px;
+}
+
+.summaryLabel {
+  color: #7B879E;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.summaryValue {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.summaryValue.ok { color: #3DDC84; }
+.summaryValue.warn { color: #F2A93B; }
+.summaryValue.critical { color: #F0455C; }
+
+/* ---------- table ---------- */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #121A2B;
+  border: 1px solid #2A3A55;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #7B879E;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2A3A55;
+  font-weight: 500;
+}
+
+.table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid #1C2A42;
+  font-size: 13px;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+/* ---------- freshness / status dot (same convention as LiveMap's legend) ---------- */
+
+.statusDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.statusDot.ok { background: #3DDC84; }
+.statusDot.warn { background: #F2A93B; }
+.statusDot.critical { background: #F0455C; }
+.statusDot.offline { background: #5A6B87; }
+
+/* ---------- empty / loading / error states ---------- */
+
+.emptyState {
+  color: #7B879E;
+  padding: 32px;
+  text-align: center;
+  background: #121A2B;
+  border: 1px solid #2A3A55;
+  border-radius: 8px;
+}
+
+.errorBanner {
+  background: rgba(240, 69, 92, 0.12);
+  border: 1px solid #F0455C;
+  color: #F0455C;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+/* ---------- department tile grid (Manager dashboard signature element) ---------- */
+
+.tileGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.tile {
+  background: #121A2B;
+  border: 1px solid #2A3A55;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.tileHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+
+.tileName {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.tileManager {
+  color: #7B879E;
+  font-size: 12px;
+}
+
+.tileMetric {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 3px 0;
+  color: #B9C3D6;
+}
+
+.tileMetricValue {
+  font-family: "IBM Plex Mono", monospace;
+  color: #E7ECF5;
+}
+
+/* ---------- shift bar (HR panel signature element) ---------- */
+
+.shiftBar {
+  display: flex;
+  height: 18px;
+  width: 220px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #1C2A42;
+}
+
+.shiftBarSegment {
+  height: 100%;
+}
+
+.shiftBarLegend {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #7B879E;
+}
+
+.shiftBarLegendSwatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
