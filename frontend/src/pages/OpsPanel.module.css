@@ -1,3 +1,4 @@
+/* Core Layout Conventions */
 .page {
   padding: 24px;
   background: #0B1220;
@@ -22,8 +23,7 @@
   margin: 0;
 }
 
-/* ---------- summary cards (Manager dashboard, top of IT/Finance) ---------- */
-
+/* ---------- Operations Summary Row ---------- */
 .summaryRow {
   display: flex;
   gap: 12px;
@@ -57,15 +57,31 @@
 .summaryValue.warn { color: #F2A93B; }
 .summaryValue.critical { color: #F0455C; }
 
-/* ---------- table ---------- */
+/* ---------- Layout Split Grid ---------- */
+.opsGrid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 1024px) {
+  .opsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Table View ---------- */
+.tableCard {
+  background: #121A2B;
+  border: 1px solid #2A3A55;
+  border-radius: 8px;
+  padding: 16px;
+}
 
 .table {
   width: 100%;
   border-collapse: collapse;
   background: #121A2B;
-  border: 1px solid #2A3A55;
-  border-radius: 8px;
-  overflow: hidden;
 }
 
 .table th {
@@ -93,8 +109,7 @@
   font-family: "IBM Plex Mono", monospace;
 }
 
-/* ---------- freshness / status dot (same convention as LiveMap's legend) ---------- */
-
+/* ---------- Live Status Dots ---------- */
 .statusDot {
   display: inline-block;
   width: 8px;
@@ -108,99 +123,45 @@
 .statusDot.critical { background: #F0455C; }
 .statusDot.offline { background: #5A6B87; }
 
-/* ---------- empty / loading / error states ---------- */
-
-.emptyState {
-  color: #7B879E;
-  padding: 32px;
-  text-align: center;
-  background: #121A2B;
-  border: 1px solid #2A3A55;
-  border-radius: 8px;
-}
-
-.errorBanner {
-  background: rgba(240, 69, 92, 0.12);
-  border: 1px solid #F0455C;
-  color: #F0455C;
-  border-radius: 6px;
-  padding: 10px 14px;
-  margin-bottom: 16px;
-  font-size: 13px;
-}
-
-/* ---------- department tile grid (Manager dashboard signature element) ---------- */
-
-.tileGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
-}
-
-.tile {
+/* ---------- Side Incident Activity Feed (Signature Element) ---------- */
+.feedCard {
   background: #121A2B;
   border: 1px solid #2A3A55;
   border-radius: 8px;
   padding: 16px;
 }
 
-.tileHeader {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 10px;
-}
-
-.tileName {
-  font-weight: 600;
+.feedTitle {
   font-size: 14px;
-}
-
-.tileManager {
-  color: #7B879E;
-  font-size: 12px;
-}
-
-.tileMetric {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  padding: 3px 0;
+  font-weight: 600;
+  margin: 0 0 16px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   color: #B9C3D6;
 }
 
-.tileMetricValue {
-  font-family: "IBM Plex Mono", monospace;
-  color: #E7ECF5;
+.alertList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-/* ---------- shift bar (HR panel signature element) ---------- */
-
-.shiftBar {
-  display: flex;
-  height: 18px;
-  width: 220px;
-  border-radius: 3px;
-  overflow: hidden;
+.alertItem {
   background: #1C2A42;
+  border-left: 4px solid #F0455C;
+  border-radius: 4px;
+  padding: 12px;
+  font-size: 13px;
 }
 
-.shiftBarSegment {
-  height: 100%;
+.alertItem.warning {
+  border-left-color: #F2A93B;
 }
 
-.shiftBarLegend {
+.alertMeta {
   display: flex;
-  gap: 12px;
-  margin-top: 8px;
+  justify-content: space-between;
   font-size: 11px;
   color: #7B879E;
-}
-
-.shiftBarLegendSwatch {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  margin-right: 4px;
+  margin-top: 6px;
 }
