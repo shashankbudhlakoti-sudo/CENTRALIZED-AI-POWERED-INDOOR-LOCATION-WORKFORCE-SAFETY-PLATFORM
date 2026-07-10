@@ -413,3 +413,59 @@ async def enroll_face(
         status="enrolled",
         embedding=embedding.tolist(),
     )
+
+# ---------------------------------------------------------------------------
+# Login Anomaly Detection Pipeline
+# ---------------------------------------------------------------------------
+
+_login_state = LoginAnomalyState()
+
+class LoginCheckRequest(BaseModel):
+    employee_id: str = Field(..., max_length=64)
+    latitude: float = Field(..., ge=-90.0, le=90.0)
+    longitude: float = Field(..., ge=-180.0, le=180.0)
+    timestamp: float
+    client_ip: Optional[str] = None
+
+
+class LoginCheckResult(BaseModel):
+    employee_id: str
+    is_anomalous: bool
+    details: dict
+
+
+@app.post("/internal/check-login", response_model=LoginCheckResult)
+async def check_login_anomaly(
+    req: LoginCheckRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Evaluates incoming login metadata for impossible velocity constraints.
+    If flagged, it synchronously dispatches a non-blocking alert report to the
+    centralized backend metrics registry."""
+    is_anomalous, details = _login_state.check_travel_anomaly(
+        employee_id=req.employee_id,
+        lat=req.latitude,
+        lon=req.longitude,
+        timestamp=req.timestamp
+    )
+
+    if is_anomalous:
+        logger.warning("Impossible travel anomaly detected for employee=%s: %s", req.employee_id, details)
+        try:
+            if req.client_ip:
+                details["client_ip"] = req.client_ip
+                
+            await report_anomaly(
+                alert_type="impossible_travel",
+                bearer_token=user.raw_token,
+                employee_id=req.employee_id,
+                details=details,
+            )
+        except Exception:
+            logger.exception("Failed to dispatch impossible_travel anomaly alert for employee=%s", req.employee_id)
+
+    return LoginCheckResult(
+        employee_id=req.employee_id,
+        is_anomalous=is_anomalous,
+        details=details
+    )
