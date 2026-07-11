@@ -41,23 +41,16 @@ class BadgeKalmanFilter:
         )
 
     def update(self, x_meas: float, y_meas: float, t: float, confidence: float = 1.0) -> tuple[float, float, float]:
-        """Feed one raw measurement, get back a smoothed (x, y, accuracy_m).
+        """Feed one raw measurement, get back a smoothed (x, y, confidence).
 
-        `confidence` (input, [0, 1]) scales measurement trust - e.g. a reading
-        seen by only one beacon should carry lower confidence than one
-        triangulated from four beacons. This is purely an internal filter
-        input and is NOT the same field as position_events.accuracy_m.
-
-        The returned third value is accuracy_m: the filter's estimated
-        positioning error in meters (derived from the covariance trace),
-        matching the schema's position_events.accuracy_m column. It is a
-        distinct concept from match_confidence on checkpoint_events, which
-        is a face-embedding match score populated elsewhere.
+        confidence in [0, 1] scales measurement trust - e.g. a reading seen
+        by only one beacon should carry lower confidence than one triangulated
+        from four beacons.
         """
         if self.state is None or self.last_t is None:
             self.state = self._init_state(x_meas, y_meas)
             self.last_t = t
-            return x_meas, y_meas, self.measurement_noise ** 0.5  # first reading: no smoothing history yet, report raw sensor noise as the error estimate
+            return x_meas, y_meas, 0.5  # first reading: no smoothing history yet
 
         dt = max(t - self.last_t, 1e-3)
         self.last_t = t
@@ -94,13 +87,54 @@ class BadgeKalmanFilter:
 
         self.state = KalmanState(x=x_new, P=P_new)
 
-        # accuracy_m: sqrt of the position covariance trace gives an
-        # estimated 1-sigma positioning error in meters - the real quantity
-        # position_events.accuracy_m expects, not a bounded 0-1 score.
+        # Output confidence: shrink with estimate uncertainty (trace of P position block)
         position_uncertainty = np.trace(P_new[:2, :2])
-        accuracy_m = float(np.sqrt(max(position_uncertainty, 0.0)))
+        out_confidence = float(np.clip(1.0 / (1.0 + position_uncertainty), 0.0, 1.0))
 
-        return float(x_new[0]), float(x_new[1]), accuracy_m
+        return float(x_new[0]), float(x_new[1]), out_confidence
+
+    def predict_next(self, seconds_ahead: float) -> tuple[float, float, float]:
+        """Predicts where this badge will be `seconds_ahead` seconds from
+        its last known update, WITHOUT a new measurement - pure
+        dead-reckoning from the current position and estimated velocity.
+
+        This is for bridging brief signal gaps (a badge walking behind a
+        pillar, a beacon dropping one reading) - not a substitute for a
+        real reading once one is available, and not the same thing as
+        the Prophet occupancy forecaster (forecasting.py), which predicts
+        zone-level crowd counts over time, not individual coordinates.
+
+        Confidence returned here should generally be treated as lower
+        than a real update()'s confidence, since it's pure extrapolation -
+        this is reflected by NOT updating the filter's actual state, so
+        repeated calls always extrapolate from the same last real
+        measurement rather than compounding drift on drift.
+
+        Raises RuntimeError if called before any real measurement has
+        ever been fed in - there is nothing to extrapolate from yet.
+        """
+        if self.state is None:
+            raise RuntimeError(
+                "predict_next() called before any real measurement - "
+                "call update() at least once first"
+            )
+        if seconds_ahead < 0:
+            raise ValueError("seconds_ahead must be non-negative")
+
+        F = np.array([
+            [1, 0, seconds_ahead, 0],
+            [0, 1, 0, seconds_ahead],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+        ])
+        Q = np.eye(4) * self.process_noise * seconds_ahead
+        x_pred = F @ self.state.x
+        P_pred = F @ self.state.P @ F.T + Q
+
+        position_uncertainty = np.trace(P_pred[:2, :2])
+        confidence = float(np.clip(1.0 / (1.0 + position_uncertainty), 0.0, 1.0))
+
+        return float(x_pred[0]), float(x_pred[1]), confidence
 
 
 class PositionFilterRegistry:
