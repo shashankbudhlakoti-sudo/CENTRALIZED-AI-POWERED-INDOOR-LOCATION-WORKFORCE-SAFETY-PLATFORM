@@ -10,23 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db, set_rls_context, engine
 from app import models
-from app.auth import get_current_user, CurrentUser
-
-# Import the query processing backend modules
-try:
-    from app.nl_query import process_natural_query
-except ImportError:
-    # Fallback to direct local imports depending on project layout structure
-    from nl_query import process_natural_query
+from app.auth import get_current_user, CurrentUser, get_service_caller
 
 app = FastAPI(title="Indoor Location & Workforce Safety Platform API", version="0.1.0")
 
-<<<<<<< HEAD
 # CORS: allow local frontend dev servers to call this API from the browser.
 # Vite defaults to 5173, Create React App to 3000 — allow both for now.
 # Tighten this to the real deployed frontend origin before any real deployment.
-=======
->>>>>>> cf688d0674c91791740b1ebe2631dd1f86867bcf
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -39,15 +29,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-<<<<<<< HEAD
 
-=======
->>>>>>> cf688d0674c91791740b1ebe2631dd1f86867bcf
 
 # ---------- Pydantic schemas (mirrors contracts/api-spec.md) ----------
-
-class NLQueryIn(BaseModel):
-    prompt: str
 
 class EmployeeIn(BaseModel):
     employee_code: str
@@ -55,6 +39,7 @@ class EmployeeIn(BaseModel):
     department: str
     role_title: Optional[str] = None
     email: Optional[str] = None
+
 
 class PositionIn(BaseModel):
     tag_id: UUID
@@ -65,8 +50,10 @@ class PositionIn(BaseModel):
     accuracy_m: Optional[float] = None
     source: str = "filtered"
 
+
 class AlertAck(BaseModel):
     note: Optional[str] = None
+
 
 class CheckpointIn(BaseModel):
     zone_id: UUID
@@ -74,17 +61,20 @@ class CheckpointIn(BaseModel):
     employee_id: Optional[UUID] = None
     photo_url: str
 
+
 class CheckpointMatchIn(BaseModel):
     match_employee_id: Optional[UUID] = None
     match_confidence: Optional[float] = None
-    match_status: str  # "match" | "mismatch" | "no_face"
+    match_status: str  # 'match' | 'mismatch' | 'no_face'
+
 
 class AnomalyDetectIn(BaseModel):
-    alert_type: str  # "zone_breach" | "inactivity" | "tag_offline"
+    alert_type: str  # 'zone_breach' | 'inactivity' | 'tag_offline'
     employee_id: Optional[UUID] = None
     tag_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
     details: Optional[dict] = None
+
 
 # ---------- Health ----------
 
@@ -98,21 +88,6 @@ def health():
         db_status = "error"
     return {"status": "ok", "db": db_status, "mqtt": "not_checked"}
 
-# ---------- Natural Language Assistant Endpoint ----------
-
-@app.post("/api/v1/query")
-def natural_language_query(payload: NLQueryIn, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Accepts a natural language text query, parses intent via the LLM system,
-    applies active row-level safety (RLS) policies, and executes against data models."""
-    set_rls_context(db, user.department, user.role)
-    try:
-        result = process_natural_query(payload.prompt, db=db, user_dept=user.department, user_role=user.role)
-        return result
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": "query_processing_failed", "message": str(e)}}
-        )
 
 # ---------- Employees ----------
 
@@ -140,6 +115,7 @@ def list_employees(user: CurrentUser = Depends(get_current_user), db: Session = 
         for r in rows
     ]
 
+
 @app.post("/api/v1/employees", status_code=201)
 def create_employee(payload: EmployeeIn, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     if user.role not in ("hr_manager", "security_admin"):
@@ -150,6 +126,7 @@ def create_employee(payload: EmployeeIn, user: CurrentUser = Depends(get_current
     db.commit()
     db.refresh(emp)
     return {"id": str(emp.id)}
+
 
 # ---------- Positions ----------
 
@@ -164,12 +141,17 @@ def latest_positions(user: CurrentUser = Depends(get_current_user), db: Session 
     rows = db.execute(sql).mappings().all()
     return [dict(r) for r in rows]
 
+
 @app.post("/api/v1/positions", status_code=201)
 def ingest_position(payload: PositionIn, db: Session = Depends(get_db)):
+    """Ingestion-only endpoint: called by the gateway (app/ or ingestion/ service),
+    authenticated separately via a service token/mTLS in production — not the
+    interactive-user Keycloak flow. Left unauthenticated here for local dev."""
     pe = models.PositionEvent(**payload.model_dump())
     db.add(pe)
     db.commit()
     return {"status": "recorded"}
+
 
 # ---------- Alerts ----------
 
@@ -189,6 +171,7 @@ def list_alerts(acknowledged: Optional[bool] = None, user: CurrentUser = Depends
         for r in rows
     ]
 
+
 @app.post("/api/v1/alerts/{alert_id}/acknowledge")
 def acknowledge_alert(alert_id: UUID, payload: AlertAck, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     set_rls_context(db, user.department, user.role)
@@ -201,18 +184,26 @@ def acknowledge_alert(alert_id: UUID, payload: AlertAck, user: CurrentUser = Dep
     db.commit()
     return {"status": "acknowledged"}
 
-# ---------- Checkpoints ----------
+
+# ---------- Checkpoints (shared feature — split seam) ----------
 
 @app.post("/api/v1/checkpoints", status_code=201)
 def create_checkpoint(payload: CheckpointIn, db: Session = Depends(get_db)):
+    """Track A: called by the camera-trigger service when someone passes a checkpoint.
+    Creates the row with match_status='pending'; Track B's face-match service
+    fills in the result afterward via PATCH /checkpoints/{id}/match."""
     cp = models.CheckpointEvent(**payload.model_dump())
     db.add(cp)
     db.commit()
     db.refresh(cp)
     return {"id": str(cp.id), "match_status": cp.match_status}
 
+
 @app.patch("/api/v1/checkpoints/{checkpoint_id}/match")
-def update_checkpoint_match(checkpoint_id: UUID, payload: CheckpointMatchIn, db: Session = Depends(get_db)):
+def update_checkpoint_match(checkpoint_id: UUID, payload: CheckpointMatchIn, db: Session = Depends(get_db), _caller: str = Depends(get_service_caller)):
+    """Track B (ML service) calls this with the face-match result.
+    The backend — not the ML service — decides whether this disagreement
+    warrants an alert, and owns the single write path into `alerts`."""
     cp = db.get(models.CheckpointEvent, checkpoint_id)
     if not cp:
         raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Checkpoint event not found"}})
@@ -222,6 +213,9 @@ def update_checkpoint_match(checkpoint_id: UUID, payload: CheckpointMatchIn, db:
     cp.match_status = payload.match_status
     cp.resolved_at = datetime.utcnow()
 
+    # Decide, server-side, whether this is a mismatch worth alerting on:
+    # either the face-match explicitly failed, or it succeeded but disagrees
+    # with who the tag is actually assigned to (possible badge sharing/tailgating).
     tag_owner_id = None
     if cp.tag_id:
         tag = db.get(models.Tag, cp.tag_id)
@@ -251,6 +245,7 @@ def update_checkpoint_match(checkpoint_id: UUID, payload: CheckpointMatchIn, db:
     db.commit()
     return {"status": "updated", "alert_created": is_mismatch}
 
+
 @app.get("/api/v1/checkpoints")
 def list_checkpoints(status: Optional[str] = None, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     set_rls_context(db, user.department, user.role)
@@ -268,17 +263,26 @@ def list_checkpoints(status: Optional[str] = None, user: CurrentUser = Depends(g
         for r in rows
     ]
 
-# ---------- Anomalies ----------
+
+# ---------- Anomalies (ML service reports, backend owns the alerts write) ----------
 
 VALID_ANOMALY_TYPES = {"zone_breach", "inactivity", "tag_offline"}
+
+# Severity defaults per anomaly type — tune as real-world data comes in.
 ANOMALY_SEVERITY = {
     "zone_breach": "critical",
     "inactivity": "warning",
     "tag_offline": "warning",
 }
 
+
 @app.post("/api/v1/anomalies/detect", status_code=201)
-def report_anomaly(payload: AnomalyDetectIn, db: Session = Depends(get_db)):
+def report_anomaly(payload: AnomalyDetectIn, db: Session = Depends(get_db), _caller: str = Depends(get_service_caller)):
+    """Called by the ML service's periodic sweep / real-time detectors.
+    The ML service reports what it detected; the backend decides severity
+    and owns the single write path into `alerts` — same pattern as
+    checkpoint_mismatch. Auth for this endpoint should be the ml-service
+    Keycloak client (client_credentials grant), not a human user token."""
     if payload.alert_type not in VALID_ANOMALY_TYPES:
         raise HTTPException(
             status_code=400,
@@ -301,7 +305,6 @@ def report_anomaly(payload: AnomalyDetectIn, db: Session = Depends(get_db)):
     db.refresh(alert)
     return {"id": str(alert.id), "alert_type": alert.alert_type, "severity": alert.severity}
 
-<<<<<<< HEAD
 
 # ---------- Role-specific dashboard panels ----------
 
@@ -370,8 +373,6 @@ def manager_department_summaries(user: CurrentUser = Depends(get_current_user), 
     return {"departments": [dict(r) for r in rows]}
 
 
-=======
->>>>>>> cf688d0674c91791740b1ebe2631dd1f86867bcf
 # ---------- WebSocket ----------
 
 class ConnectionManager:
@@ -393,13 +394,17 @@ class ConnectionManager:
             except Exception:
                 self.disconnect(ws)
 
+
 manager = ConnectionManager()
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
+            # Client can send {"action": "subscribe", "floor": 1} — filtering
+            # logic to be added once frontend (Track B) defines its needs.
             _ = await websocket.receive_json()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
