@@ -33,60 +33,24 @@ _rssi_buffer: dict[str, dict[str, float]] = {}
 def resolve_position(tag_uid: str) -> tuple[float, float] | None:
     """
     PLACEHOLDER position resolver.
-    Replace with real trilateration/fingerprinting (Track B, Phase 4),
-    which genuinely needs 3+ gateways to compute a real (x, y).
-
-    TESTING NOTE: threshold is set to 1 right now so a single laptop
-    scanner can exercise the full pipeline end-to-end (raw RSSI -> MQTT
-    -> this -> backend -> database) without needing 3 physical gateways
-    yet. Position returned is NOT real (x, y) — just proves the pipe
-    works. Bump this back to >=3 once real gateways/trilateration exist.
+    Replace with real trilateration/fingerprinting (Track B, Phase 4).
+    Returns None until at least 3 gateways have reported for this tag.
     """
     readings = _rssi_buffer.get(tag_uid, {})
-    if len(readings) < 1:
+    if len(readings) < 3:
         return None
-    # naive placeholder — NOT real position, just proves the pipeline works
+    # naive centroid placeholder — NOT for production use
     return (0.0, 0.0)
 
 
-# Cache of tag_uid -> real database UUID, so we don't hit the lookup
-# endpoint on every single reading.
-_tag_id_cache: dict[str, str] = {}
-
-
-def resolve_tag_id(tag_uid: str) -> str | None:
-    """Looks up the real database UUID for a tag_uid label, caching the result.
-    Returns None if the tag isn't registered yet (e.g. seed.sql wasn't run)."""
-    if tag_uid in _tag_id_cache:
-        return _tag_id_cache[tag_uid]
-
-    try:
-        resp = requests.get(f"{BACKEND_URL}/api/v1/tags/lookup/{tag_uid}", timeout=3)
-        if resp.status_code == 404:
-            print(f"[gateway] tag_uid '{tag_uid}' not registered in DB yet — run contracts/seed.sql")
-            return None
-        resp.raise_for_status()
-        real_id = resp.json()["id"]
-        _tag_id_cache[tag_uid] = real_id
-        return real_id
-    except requests.RequestException as e:
-        print(f"[gateway] failed to resolve tag_id for {tag_uid}: {e}")
-        return None
-
-
 def send_position(tag_uid: str, x: float, y: float):
-    real_tag_id = resolve_tag_id(tag_uid)
-    if real_tag_id is None:
-        return  # can't post without a real tag_id — skip this reading
-
     try:
         resp = requests.post(
             f"{BACKEND_URL}/api/v1/positions",
-            json={"tag_id": real_tag_id, "floor": 1, "x": x, "y": y, "source": "raw"},
+            json={"tag_id": tag_uid, "floor": 1, "x": x, "y": y, "source": "raw"},
             timeout=3,
         )
         resp.raise_for_status()
-        print(f"[gateway] posted position for {tag_uid} (tag_id={real_tag_id})")
     except requests.RequestException as e:
         print(f"[gateway] failed to POST position for {tag_uid}: {e}")
 

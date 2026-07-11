@@ -3,6 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -12,6 +13,22 @@ from app import models
 from app.auth import get_current_user, CurrentUser
 
 app = FastAPI(title="Indoor Location & Workforce Safety Platform API", version="0.1.0")
+
+# CORS: allow local frontend dev servers to call this API from the browser.
+# Vite defaults to 5173, Create React App to 3000 — allow both for now.
+# Tighten this to the real deployed frontend origin before any real deployment.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------- Pydantic schemas (mirrors contracts/api-spec.md) ----------
@@ -73,6 +90,17 @@ def health():
 
 
 # ---------- Employees ----------
+
+@app.get("/api/v1/tags/lookup/{tag_uid}")
+def lookup_tag(tag_uid: str, db: Session = Depends(get_db)):
+    """Resolves a human-readable tag_uid (e.g. 'shashank-tag') to its real
+    database UUID. Used by the ingestion gateway before posting positions,
+    since PositionIn.tag_id must be the actual tags.id, not the label."""
+    tag = db.execute(select(models.Tag).where(models.Tag.tag_uid == tag_uid)).scalar_one_or_none()
+    if not tag:
+        raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": f"No tag registered with tag_uid={tag_uid}"}})
+    return {"id": str(tag.id), "tag_uid": tag.tag_uid, "employee_id": str(tag.employee_id) if tag.employee_id else None}
+
 
 @app.get("/api/v1/employees")
 def list_employees(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -276,6 +304,73 @@ def report_anomaly(payload: AnomalyDetectIn, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(alert)
     return {"id": str(alert.id), "alert_type": alert.alert_type, "severity": alert.severity}
+
+
+# ---------- Role-specific dashboard panels ----------
+
+@app.get("/api/v1/it/device-health")
+def it_device_health(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role not in ("it_manager", "security_admin", "general_manager"):
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden", "message": "Not permitted"}})
+    set_rls_context(db, user.department, user.role)
+    tags = db.execute(select(models.Tag)).scalars().all()
+    now = datetime.utcnow()
+    stale_cutoff = now.timestamp() - 3600  # tags not seen in 1hr flagged offline
+    return {
+        "total_tags": len(tags),
+        "active_tags": sum(1 for t in tags if t.active),
+        "low_battery": [str(t.id) for t in tags if t.battery_pct is not None and t.battery_pct < 20],
+        "possibly_offline": [
+            str(t.id) for t in tags
+            if t.last_seen_at and t.last_seen_at.timestamp() < stale_cutoff
+        ],
+    }
+
+
+@app.get("/api/v1/hr/attendance-summary")
+def hr_attendance_summary(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role not in ("hr_manager", "security_admin", "general_manager"):
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden", "message": "Not permitted"}})
+    set_rls_context(db, user.department, user.role)
+    sql = text("""
+        SELECT e.department, COUNT(DISTINCT pe.employee_id) AS present_today
+        FROM position_events pe
+        JOIN employees e ON e.id = pe.employee_id
+        WHERE pe.recorded_at >= CURRENT_DATE
+        GROUP BY e.department
+    """)
+    rows = db.execute(sql).mappings().all()
+    return {"present_by_department": [dict(r) for r in rows]}
+
+
+@app.get("/api/v1/finance/assets")
+def finance_assets(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role not in ("finance_manager", "security_admin", "general_manager"):
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden", "message": "Not permitted"}})
+    set_rls_context(db, user.department, user.role)
+    tags = db.execute(select(models.Tag)).scalars().all()
+    return {
+        "total_assets": len(tags),
+        "assigned": sum(1 for t in tags if t.employee_id is not None),
+        "unassigned": sum(1 for t in tags if t.employee_id is None),
+    }
+
+
+@app.get("/api/v1/manager/department-summaries")
+def manager_department_summaries(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role not in ("general_manager", "security_admin"):
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden", "message": "Not permitted"}})
+    set_rls_context(db, user.department, user.role)
+    sql = text("""
+        SELECT e.department,
+               COUNT(DISTINCT e.id) AS employee_count,
+               COUNT(DISTINCT a.id) FILTER (WHERE a.acknowledged = false) AS open_alerts
+        FROM employees e
+        LEFT JOIN alerts a ON a.employee_id = e.id
+        GROUP BY e.department
+    """)
+    rows = db.execute(sql).mappings().all()
+    return {"departments": [dict(r) for r in rows]}
 
 
 # ---------- WebSocket ----------

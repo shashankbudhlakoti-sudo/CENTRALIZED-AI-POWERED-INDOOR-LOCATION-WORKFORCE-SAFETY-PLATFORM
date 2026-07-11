@@ -1,337 +1,332 @@
-"""
-ML service entry point.
-
-Security posture:
-- Every data-touching route requires a verified Keycloak JWT (app.security.auth).
-- CORS is locked to the known frontend origin only - no wildcard.
-- No route ever accepts a raw employee_id from the frontend for scope
-  filtering; the JWT's own claims determine what a caller may query, and the
-  backend has already scoped what it forwards here.
-- Structured logging - no raw PII (photos, exact coordinates) ever hits logs.
-"""
-
-import logging
-import os
-
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-
-from pathlib import Path
-
-from app.security.auth import AuthenticatedUser, get_current_user, require_role
-from app.security.audit import log_action
-from app.models.position_filter import PositionFilterRegistry
-from app.models.train_mode import TrainingWalk, LabeledSample
-from app.models.fingerprinting import FingerprintModel
-from app.models.face_match import find_best_match
-from app.services.embedding_backend import EmbeddingGenerator, InsightFaceEmbeddingGenerator
-from app.services.enrolled_embeddings_repo import EnrolledEmbeddingsRepository, PostgresEnrolledEmbeddings
-from app.services.checkpoint_client import patch_checkpoint_match
-from app.services import zone_repo
-from app.services.anomaly_client import report_anomaly
-from app.services import tag_offline_sweep
-from app.models.anomaly_state import ZoneBreachState, InactivityState
+from datetime import datetime
 from typing import Optional
-import asyncio
-import time
-import httpx
-from contextlib import asynccontextmanager
+from uuid import UUID
 
-MODEL_DIR = Path(os.environ.get("MODEL_DIR", "/data/models"))
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-logger = logging.getLogger("ml-service")
+from app.database import get_db, set_rls_context, engine
+from app import models
+from app.auth import get_current_user, CurrentUser
 
-ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
-if not ALLOWED_ORIGINS:
-    raise RuntimeError("ALLOWED_ORIGINS must be set explicitly - refusing to default to '*'")
+app = FastAPI(title="Indoor Location & Workforce Safety Platform API", version="0.1.0")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # tag_offline detection runs on a timer, not per-request (see
-    # tag_offline_sweep.py docstring for why) - started alongside the app
-    # and cancelled cleanly on shutdown rather than left as an orphaned task.
-    sweep_task = asyncio.create_task(tag_offline_sweep.run_forever())
-    try:
-        yield
-    finally:
-        sweep_task.cancel()
-        try:
-            await sweep_task
-        except asyncio.CancelledError:
-            pass
-
-
-app = FastAPI(title="Indoor Tracking ML Service", version="0.1.0", lifespan=lifespan)
-
+# CORS: allow local frontend dev servers to call this API from the browser.
+# Vite defaults to 5173, Create React App to 3000 — allow both for now.
+# Tighten this to the real deployed frontend origin before any real deployment.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-registry = PositionFilterRegistry()
+
+# ---------- Pydantic schemas (mirrors contracts/api-spec.md) ----------
+
+class EmployeeIn(BaseModel):
+    employee_code: str
+    full_name: str
+    department: str
+    role_title: Optional[str] = None
+    email: Optional[str] = None
 
 
-@app.get("/health")
-async def health():
-    # Deliberately unauthenticated - used by Docker/orchestration health
-    # checks only. Returns no data, just process liveness.
-    return {"status": "ok"}
-
-
-class RawPositionReading(BaseModel):
-    tag_id: str = Field(..., max_length=64)
-    x_meas: float
-    y_meas: float
-    timestamp: float
-    confidence: float = Field(1.0, ge=0.0, le=1.0)
-
-
-class FilteredPosition(BaseModel):
-    tag_id: str
+class PositionIn(BaseModel):
+    tag_id: UUID
+    employee_id: Optional[UUID] = None
+    floor: int = 1
     x: float
     y: float
-    accuracy_m: float  # estimated positioning error in meters, matches
-    # position_events.accuracy_m. Distinct from checkpoint_events.match_confidence
-    # (face-match score) - do not conflate the two.
+    accuracy_m: Optional[float] = None
+    source: str = "filtered"
 
 
-_zone_breach_state = ZoneBreachState()
-_inactivity_state = InactivityState()
-
-# Placeholder - needs real calibration once we know how still is "normal"
-# for someone standing at a desk/checkpoint vs. genuinely incapacitated.
-INACTIVITY_THRESHOLD_SECONDS = 300
+class AlertAck(BaseModel):
+    note: Optional[str] = None
 
 
-@app.post("/internal/filter-position", response_model=FilteredPosition)
-async def filter_position(
-    reading: RawPositionReading,
-    user: AuthenticatedUser = Depends(get_current_user),
-):
-    """Called by the ingestion pipeline (via the backend) with one raw
-    trilaterated reading; returns the Kalman-smoothed position.
-
-    Note: this endpoint is internal-service-to-service traffic (backend ->
-    ML service), not something the React frontend calls directly. It still
-    requires a verified token because the network boundary alone is never
-    treated as sufficient authorization.
-
-    Also runs the two real-time anomaly checks (zone_breach, inactivity)
-    synchronously here - this is the one place the ML service sees every
-    position update as it happens. Each check is wrapped so a failure in
-    anomaly detection (DB hiccup, backend unreachable) never breaks the
-    core position-filtering response, which must stay reliable
-    independent of anomaly detection's health. tag_offline is NOT checked
-    here - see tag_offline_sweep.py for why that one needs a timer instead.
-    """
-    kf = registry.get(reading.tag_id)
-    x, y, accuracy_m = kf.update(reading.x_meas, reading.y_meas, reading.timestamp, reading.confidence)
-    logger.info("filtered position tag=%s accuracy_m=%.2f", reading.tag_id, accuracy_m)
-
-    try:
-        restricted = await zone_repo.find_restricted_zone_containing(x, y)
-        zone_id = restricted["zone_id"] if restricted else None
-        if _zone_breach_state.check_entry(reading.tag_id, zone_id):
-            employee_id = await zone_repo.get_tag_employee(reading.tag_id)
-            await report_anomaly(
-                alert_type="zone_breach",
-                bearer_token=user.raw_token,
-                employee_id=employee_id,
-                tag_id=reading.tag_id,
-                zone_id=zone_id,
-                details={"zone_name": restricted["name"], "x": x, "y": y},
-            )
-    except Exception:
-        logger.exception(
-            "zone_breach check failed for tag=%s (position filtering still succeeded)", reading.tag_id
-        )
-
-    try:
-        if _inactivity_state.check_inactivity(reading.tag_id, x, y, time.time(), INACTIVITY_THRESHOLD_SECONDS):
-            employee_id = await zone_repo.get_tag_employee(reading.tag_id)
-            await report_anomaly(
-                alert_type="inactivity",
-                bearer_token=user.raw_token,
-                employee_id=employee_id,
-                tag_id=reading.tag_id,
-                details={"x": x, "y": y, "still_for_seconds": INACTIVITY_THRESHOLD_SECONDS},
-            )
-    except Exception:
-        logger.exception(
-            "inactivity check failed for tag=%s (position filtering still succeeded)", reading.tag_id
-        )
-
-    return FilteredPosition(tag_id=reading.tag_id, x=x, y=y, accuracy_m=accuracy_m)
-
-
-# ---------------------------------------------------------------------------
-# Fingerprinting (Section 5 - Train Mode)
-# ---------------------------------------------------------------------------
-
-class LabeledSampleIn(BaseModel):
-    true_x: float
-    true_y: float
-    rssi: dict[str, float]
-    timestamp: float
-    badge_orientation: str = "unknown"
-
-
-class TrainRequest(BaseModel):
-    zone_id: str = Field(..., max_length=64)
-    beacon_ids: list[str] = Field(..., min_length=1)
-    samples: list[LabeledSampleIn] = Field(..., min_length=1)
-
-
-class ValidationResult(BaseModel):
-    n_train: int
-    n_holdout: int
-    mean_error_m: float
-    p90_error_m: float
-    max_error_m: float
-
-
-@app.post(
-    "/internal/fingerprint/train",
-    response_model=ValidationResult,
-    dependencies=[Depends(require_role("security_admin"))],
-)
-async def train_fingerprint_model(req: TrainRequest, user: AuthenticatedUser = Depends(get_current_user)):
-    """Retrains the positioning model for a zone from a freshly collected
-    Train Mode walk. Restricted to security_admin: retraining changes
-    positioning accuracy for every employee tracked in this zone, so it is
-    not something any manager role should be able to trigger casually.
-
-    The model is validated against a held-out slice of THIS SAME walk
-    before it can be saved (see FingerprintModel.save) - an unvalidated
-    model is never deployed, per Section 5's "defensible in a review"
-    requirement.
-    """
-    walk = TrainingWalk(zone_id=req.zone_id, beacon_ids=req.beacon_ids)
-    for s in req.samples:
-        walk.add_sample(LabeledSample(**s.model_dump()))
-
-    model = FingerprintModel(beacon_ids=sorted(req.beacon_ids))
-    report = model.fit_and_validate(walk)
-    model.save(MODEL_DIR / req.zone_id)
-
-    logger.info(
-        "fingerprint model retrained zone=%s mean_error_m=%.2f by=%s",
-        req.zone_id, report.mean_error_m, user.sub,
-    )
-    # Retraining is a system-level action, not tied to one employee, so
-    # resource_id is None - still logged so there's a record of who
-    # changed the live positioning model and when. actor_role comes from
-    # the verified JWT, matching the user_role enum in schema.sql exactly.
-    await log_action(
-        actor_user_id=user.sub,
-        actor_role="security_admin",
-        action="model_retrain",
-        resource_type="model",
-        resource_id=req.zone_id,
-        justification="train_mode_walk",
-    )
-
-    return ValidationResult(**report.as_dict())
-
-
-class PredictRequest(BaseModel):
-    zone_id: str = Field(..., max_length=64)
-    rssi: dict[str, float]
-
-
-class PredictResult(BaseModel):
-    x: float
-    y: float
-
-
-@app.post("/internal/fingerprint/predict", response_model=PredictResult)
-async def predict_position(req: PredictRequest, user: AuthenticatedUser = Depends(get_current_user)):
-    model_path = MODEL_DIR / req.zone_id
-    if not model_path.exists():
-        raise HTTPException(status_code=404, detail=f"No trained model for zone '{req.zone_id}' yet")
-    model = FingerprintModel.load(model_path)
-    x, y = model.predict(req.rssi)
-    return PredictResult(x=x, y=y)
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint verification (Section 5 / checkpoint_events)
-#
-# Backend owns creating the checkpoint_events row (zone_id, tag_id,
-# employee_id, photo_url) with match_status='pending'. This service
-# generates a face embedding from the photo, compares it against enrolled
-# employees, and PATCHes the result back via the backend's
-# PATCH /checkpoints/{id}/match - it never writes to Postgres directly for
-# this table (same single-write-path pattern as position_events).
-#
-# Ownership confirmed with Shashank: the backend, not this service, decides
-# whether a result is a badge-sharing/tailgating signal (comparing
-# match_employee_id/match_status against its own tag-assignment record and
-# creating the alerts row itself). This service only ever reports the face
-# match - it doesn't need the alerts schema or tag-assignment table at all.
-# ---------------------------------------------------------------------------
-
-_embedding_generator: EmbeddingGenerator = InsightFaceEmbeddingGenerator()
-_enrolled_repo: EnrolledEmbeddingsRepository = PostgresEnrolledEmbeddings()
-
-
-class CheckpointVerifyRequest(BaseModel):
-    checkpoint_event_id: str
-    zone_id: str
+class CheckpointIn(BaseModel):
+    zone_id: UUID
+    tag_id: Optional[UUID] = None
+    employee_id: Optional[UUID] = None
     photo_url: str
 
 
-class CheckpointVerifyResult(BaseModel):
-    checkpoint_event_id: str
-    match_employee_id: Optional[str]
-    match_confidence: Optional[float]
-    match_status: str
+class CheckpointMatchIn(BaseModel):
+    match_employee_id: Optional[UUID] = None
+    match_confidence: Optional[float] = None
+    match_status: str  # 'match' | 'mismatch' | 'no_face'
 
 
-@app.post(
-    "/internal/checkpoint-verify",
-    response_model=CheckpointVerifyResult,
-    dependencies=[Depends(require_role("security_admin"))],
-)
-async def checkpoint_verify(
-    req: CheckpointVerifyRequest,
-    user: AuthenticatedUser = Depends(get_current_user),
-):
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        photo_resp = await client.get(req.photo_url)
-        photo_resp.raise_for_status()
-        photo_bytes = photo_resp.content
+class AnomalyDetectIn(BaseModel):
+    alert_type: str  # 'zone_breach' | 'inactivity' | 'tag_offline'
+    employee_id: Optional[UUID] = None
+    tag_id: Optional[UUID] = None
+    zone_id: Optional[UUID] = None
+    details: Optional[dict] = None
 
-    query_embedding = await _embedding_generator.generate(photo_bytes)
-    enrolled = await _enrolled_repo.fetch_all()
-    result = find_best_match(query_embedding, enrolled)
 
-    await patch_checkpoint_match(
-        checkpoint_event_id=req.checkpoint_event_id,
-        result=result,
-        service_token=user.raw_token,
+# ---------- Health ----------
+
+@app.get("/health")
+def health():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        db_status = "ok"
+    except Exception:
+        db_status = "error"
+    return {"status": "ok", "db": db_status, "mqtt": "not_checked"}
+
+
+# ---------- Employees ----------
+
+@app.get("/api/v1/employees")
+def list_employees(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    set_rls_context(db, user.department, user.role)
+    rows = db.execute(select(models.Employee)).scalars().all()
+    return [
+        {
+            "id": str(r.id), "employee_code": r.employee_code, "full_name": r.full_name,
+            "department": r.department, "role_title": r.role_title, "email": r.email,
+            "consent_given": r.consent_given, "active": r.active,
+        }
+        for r in rows
+    ]
+
+
+@app.post("/api/v1/employees", status_code=201)
+def create_employee(payload: EmployeeIn, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role not in ("hr_manager", "security_admin"):
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden", "message": "Not permitted to create employees"}})
+    set_rls_context(db, user.department, user.role)
+    emp = models.Employee(**payload.model_dump())
+    db.add(emp)
+    db.commit()
+    db.refresh(emp)
+    return {"id": str(emp.id)}
+
+
+# ---------- Positions ----------
+
+@app.get("/api/v1/positions/latest")
+def latest_positions(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    set_rls_context(db, user.department, user.role)
+    sql = text("""
+        SELECT DISTINCT ON (tag_id) tag_id, employee_id, floor, x, y, accuracy_m, recorded_at
+        FROM position_events
+        ORDER BY tag_id, recorded_at DESC
+    """)
+    rows = db.execute(sql).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/v1/positions", status_code=201)
+def ingest_position(payload: PositionIn, db: Session = Depends(get_db)):
+    """Ingestion-only endpoint: called by the gateway (app/ or ingestion/ service),
+    authenticated separately via a service token/mTLS in production — not the
+    interactive-user Keycloak flow. Left unauthenticated here for local dev."""
+    pe = models.PositionEvent(**payload.model_dump())
+    db.add(pe)
+    db.commit()
+    return {"status": "recorded"}
+
+
+# ---------- Alerts ----------
+
+@app.get("/api/v1/alerts")
+def list_alerts(acknowledged: Optional[bool] = None, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    set_rls_context(db, user.department, user.role)
+    q = select(models.Alert)
+    if acknowledged is not None:
+        q = q.where(models.Alert.acknowledged == acknowledged)
+    rows = db.execute(q.order_by(models.Alert.created_at.desc())).scalars().all()
+    return [
+        {
+            "id": str(r.id), "alert_type": r.alert_type, "severity": r.severity,
+            "employee_id": str(r.employee_id) if r.employee_id else None,
+            "acknowledged": r.acknowledged, "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+@app.post("/api/v1/alerts/{alert_id}/acknowledge")
+def acknowledge_alert(alert_id: UUID, payload: AlertAck, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    set_rls_context(db, user.department, user.role)
+    alert = db.get(models.Alert, alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Alert not found"}})
+    alert.acknowledged = True
+    alert.acknowledged_by = user.user_id
+    alert.acknowledged_at = datetime.utcnow()
+    db.commit()
+    return {"status": "acknowledged"}
+
+
+# ---------- Checkpoints (shared feature — split seam) ----------
+
+@app.post("/api/v1/checkpoints", status_code=201)
+def create_checkpoint(payload: CheckpointIn, db: Session = Depends(get_db)):
+    """Track A: called by the camera-trigger service when someone passes a checkpoint.
+    Creates the row with match_status='pending'; Track B's face-match service
+    fills in the result afterward via PATCH /checkpoints/{id}/match."""
+    cp = models.CheckpointEvent(**payload.model_dump())
+    db.add(cp)
+    db.commit()
+    db.refresh(cp)
+    return {"id": str(cp.id), "match_status": cp.match_status}
+
+
+@app.patch("/api/v1/checkpoints/{checkpoint_id}/match")
+def update_checkpoint_match(checkpoint_id: UUID, payload: CheckpointMatchIn, db: Session = Depends(get_db)):
+    """Track B (ML service) calls this with the face-match result.
+    The backend — not the ML service — decides whether this disagreement
+    warrants an alert, and owns the single write path into `alerts`."""
+    cp = db.get(models.CheckpointEvent, checkpoint_id)
+    if not cp:
+        raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Checkpoint event not found"}})
+
+    cp.match_employee_id = payload.match_employee_id
+    cp.match_confidence = payload.match_confidence
+    cp.match_status = payload.match_status
+    cp.resolved_at = datetime.utcnow()
+
+    # Decide, server-side, whether this is a mismatch worth alerting on:
+    # either the face-match explicitly failed, or it succeeded but disagrees
+    # with who the tag is actually assigned to (possible badge sharing/tailgating).
+    tag_owner_id = None
+    if cp.tag_id:
+        tag = db.get(models.Tag, cp.tag_id)
+        tag_owner_id = tag.employee_id if tag else None
+
+    is_mismatch = (
+        payload.match_status in ("mismatch", "no_face")
+        or (payload.match_status == "match" and tag_owner_id is not None and payload.match_employee_id != tag_owner_id)
     )
 
-    # Every checkpoint verification touches an individual's data - logged
-    # before returning, per Section 8. resource_id is the checkpoint event,
-    # not the matched employee, since match_employee_id may be None.
-    await log_action(
-        actor_user_id=user.sub,
-        actor_role="security_admin",
-        action="checkpoint_verify",
-        resource_type="checkpoint_events",
-        resource_id=req.checkpoint_event_id,
-        justification=f"zone={req.zone_id} status={result.match_status}",
-    )
+    if is_mismatch:
+        alert = models.Alert(
+            alert_type="checkpoint_mismatch",
+            severity="critical" if payload.match_status != "no_face" else "warning",
+            employee_id=tag_owner_id or payload.match_employee_id,
+            zone_id=cp.zone_id,
+            details={
+                "checkpoint_event_id": str(cp.id),
+                "match_status": payload.match_status,
+                "match_confidence": payload.match_confidence,
+                "match_employee_id": str(payload.match_employee_id) if payload.match_employee_id else None,
+                "tag_owner_employee_id": str(tag_owner_id) if tag_owner_id else None,
+            },
+        )
+        db.add(alert)
 
-    return CheckpointVerifyResult(
-        checkpoint_event_id=req.checkpoint_event_id,
-        match_employee_id=result.match_employee_id,
-        match_confidence=result.match_confidence,
-        match_status=result.match_status,
+    db.commit()
+    return {"status": "updated", "alert_created": is_mismatch}
+
+
+@app.get("/api/v1/checkpoints")
+def list_checkpoints(status: Optional[str] = None, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    set_rls_context(db, user.department, user.role)
+    q = select(models.CheckpointEvent)
+    if status:
+        q = q.where(models.CheckpointEvent.match_status == status)
+    rows = db.execute(q.order_by(models.CheckpointEvent.triggered_at.desc())).scalars().all()
+    return [
+        {
+            "id": str(r.id), "zone_id": str(r.zone_id), "photo_url": r.photo_url,
+            "match_status": r.match_status, "match_confidence": r.match_confidence,
+            "match_employee_id": str(r.match_employee_id) if r.match_employee_id else None,
+            "triggered_at": r.triggered_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+# ---------- Anomalies (ML service reports, backend owns the alerts write) ----------
+
+VALID_ANOMALY_TYPES = {"zone_breach", "inactivity", "tag_offline"}
+
+# Severity defaults per anomaly type — tune as real-world data comes in.
+ANOMALY_SEVERITY = {
+    "zone_breach": "critical",
+    "inactivity": "warning",
+    "tag_offline": "warning",
+}
+
+
+@app.post("/api/v1/anomalies/detect", status_code=201)
+def report_anomaly(payload: AnomalyDetectIn, db: Session = Depends(get_db)):
+    """Called by the ML service's periodic sweep / real-time detectors.
+    The ML service reports what it detected; the backend decides severity
+    and owns the single write path into `alerts` — same pattern as
+    checkpoint_mismatch. Auth for this endpoint should be the ml-service
+    Keycloak client (client_credentials grant), not a human user token."""
+    if payload.alert_type not in VALID_ANOMALY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "invalid_alert_type", "message": f"alert_type must be one of {sorted(VALID_ANOMALY_TYPES)}"}},
+        )
+
+    alert = models.Alert(
+        alert_type=payload.alert_type,
+        severity=ANOMALY_SEVERITY.get(payload.alert_type, "warning"),
+        employee_id=payload.employee_id,
+        zone_id=payload.zone_id,
+        details={
+            **(payload.details or {}),
+            "tag_id": str(payload.tag_id) if payload.tag_id else None,
+            "reported_by": "ml_service",
+        },
     )
+    db.add(alert)
+    db.commit()
+    db.refresh(alert)
+    return {"id": str(alert.id), "alert_type": alert.alert_type, "severity": alert.severity}
+
+
+# ---------- WebSocket ----------
+
+class ConnectionManager:
+    def __init__(self):
+        self.active: list[WebSocket] = []
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active.append(ws)
+
+    def disconnect(self, ws: WebSocket):
+        if ws in self.active:
+            self.active.remove(ws)
+
+    async def broadcast(self, message: dict):
+        for ws in list(self.active):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                self.disconnect(ws)
+
+
+manager = ConnectionManager()
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Client can send {"action": "subscribe", "floor": 1} — filtering
+            # logic to be added once frontend (Track B) defines its needs.
+            _ = await websocket.receive_json()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)

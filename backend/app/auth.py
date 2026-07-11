@@ -7,6 +7,12 @@ KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "safety-platform")
 
 TIER_3_4_ROLES = {"security_admin", "general_manager"}
 
+# Shared with ml-service/app/security/auth.py - keep both in sync when
+# adding new MFA methods. Only 'otp' is actually configured and tested in
+# the realm right now - don't add a method here until it's real, not
+# just planned (same principle as not shipping an unvalidated model).
+MFA_METHODS = {"otp"}
+
 
 class CurrentUser:
     def __init__(self, user_id: str, department: str, role: str, mfa: bool):
@@ -39,11 +45,17 @@ def get_current_user(authorization: str = Header(...)) -> CurrentUser:
     role = next((r for r in roles if r in {
         "hr_manager", "it_manager", "finance_manager", "security_admin", "general_manager"
     }), None)
-
     if not role:
         raise HTTPException(status_code=403, detail={"error": {"code": "no_role", "message": "No recognized role in token"}})
 
-    mfa = claims.get("acr") == "mfa"
+    # amr (Authentication Methods References) is a standard OIDC claim
+    # listing which auth methods were actually used - e.g. ["pwd"] or
+    # ["pwd", "otp"]. Using this instead of acr avoids needing a custom
+    # ACR-to-LoA mapping configured in the realm, and is more portable
+    # if the IdP ever changes.
+    amr = set(claims.get("amr", []))
+    mfa = bool(amr & MFA_METHODS)
+
     if role in TIER_3_4_ROLES and not mfa:
         raise HTTPException(status_code=403, detail={"error": {"code": "mfa_required", "message": "MFA required for this role"}})
 
