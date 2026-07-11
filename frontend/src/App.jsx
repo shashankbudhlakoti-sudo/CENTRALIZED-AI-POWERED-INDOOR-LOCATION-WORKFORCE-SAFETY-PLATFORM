@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { initAuth, getRoles, logout } from "./auth/keycloak";
 import ITPanel from "./pages/ITPanel";
@@ -6,6 +6,8 @@ import HRPanel from "./pages/HRPanel";
 import FinancePanel from "./pages/FinancePanel";
 import SecurityPanel from "./pages/SecurityPanel";
 import ManagerDashboard from "./pages/ManagerDashboard";
+import OpsPanel from "./pages/OpsPanel";
+
 const ROLE_HOME = {
   it_manager: "/it",
   hr_manager: "/hr",
@@ -13,9 +15,11 @@ const ROLE_HOME = {
   security_admin: "/security",
   general_manager: "/manager",
 };
+
 export default function App() {
   const [ready, setReady] = useState(false);
   const [homePath, setHomePath] = useState(null);
+
   useEffect(() => {
     initAuth().then((authenticated) => {
       if (!authenticated) return;
@@ -25,9 +29,11 @@ export default function App() {
       setReady(true);
     });
   }, []);
+
   if (!ready) {
     return <div style={{ padding: 24 }}>Signing you in...</div>;
   }
+
   return (
     <BrowserRouter>
       <header style={{ display: "flex", justifyContent: "flex-end", padding: 12 }}>
@@ -40,6 +46,7 @@ export default function App() {
         <Route path="/finance" element={<FinancePanel />} />
         <Route path="/security" element={<SecurityPanel />} />
         <Route path="/manager" element={<ManagerDashboard />} />
+        <Route path="/ops" element={<OpsPanel />} />
         <Route path="/no-access" element={<div style={{ padding: 24 }}>Your account has no dashboard access assigned. Contact your administrator.</div>} />
       </Routes>
     </BrowserRouter>

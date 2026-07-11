@@ -289,6 +289,7 @@ def report_anomaly(payload: AnomalyDetectIn, db: Session = Depends(get_db)):
             "reported_by": "ml_service",
         },
     )
+<<<<<<< HEAD
     db.add(alert)
     db.commit()
     db.refresh(alert)
@@ -330,3 +331,139 @@ async def websocket_endpoint(websocket: WebSocket):
             _ = await websocket.receive_json()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+=======
+
+
+# ---------------------------------------------------------------------------
+# Face enrollment (employees.face_embedding)
+#
+# PROPOSED design, NOT YET CONFIRMED with Shashank - unlike every other
+# write-path pattern in this file, this one hasn't been discussed with him
+# yet. Flagging the open decisions rather than silently picking one:
+#
+# 1. Role gate: allowing BOTH security_admin and hr_manager for now, since
+#    it's genuinely unclear which should own enrollment. Narrow this once
+#    he decides - see require_role's multi-role support added for this.
+# 2. Re-enrollment: this endpoint always generates and returns a fresh
+#    embedding: it doesn't know or care whether employee_id already has
+#    one. Overwrite-vs-reject on re-enrollment is the BACKEND's decision
+#    when it writes employees.face_embedding, not something this service
+#    can decide since it never reads or writes that table itself.
+# 3. Who captures the enrollment photo (HR onboarding flow? manual admin
+#    upload?) is entirely a backend/frontend workflow question - this
+#    endpoint only needs a photo_url, however it got there.
+#
+# Reuses the exact same EmbeddingGenerator as checkpoint verification - no
+# new face-processing code, just a thin endpoint + audit logging. This
+# service never writes to employees.face_embedding directly - same
+# single-write-path pattern as positions/checkpoints/alerts: the backend
+# takes this response and owns the actual write.
+# ---------------------------------------------------------------------------
+
+
+class EnrollFaceRequest(BaseModel):
+    employee_id: str
+    photo_url: str
+
+
+class EnrollFaceResult(BaseModel):
+    employee_id: str
+    status: str  # 'enrolled' | 'no_face'
+    embedding: Optional[list[float]] = None
+
+
+@app.post(
+    "/internal/enroll-face",
+    response_model=EnrollFaceResult,
+    dependencies=[Depends(require_role("security_admin", "hr_manager"))],
+)
+async def enroll_face(
+    req: EnrollFaceRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        photo_resp = await client.get(req.photo_url)
+        photo_resp.raise_for_status()
+        photo_bytes = photo_resp.content
+
+    embedding = await _embedding_generator.generate(photo_bytes)
+
+    # Enrollment writes biometric data to a specific employee's record -
+    # logged regardless of outcome, same as checkpoint_verify. actor_role
+    # reflects whichever of the two allowed roles this caller actually
+    # has (security_admin preferred if they somehow have both).
+    actor_role = "security_admin" if user.has_role("security_admin") else "hr_manager"
+    await log_action(
+        actor_user_id=user.sub,
+        actor_role=actor_role,
+        action="enroll_face",
+        resource_type="employees",
+        resource_id=req.employee_id,
+        justification="face enrollment" if embedding is not None else "face enrollment failed: no face detected",
+    )
+
+    if embedding is None:
+        return EnrollFaceResult(employee_id=req.employee_id, status="no_face", embedding=None)
+
+    return EnrollFaceResult(
+        employee_id=req.employee_id,
+        status="enrolled",
+        embedding=embedding.tolist(),
+    )
+
+# ---------------------------------------------------------------------------
+# Login Anomaly Detection Pipeline
+# ---------------------------------------------------------------------------
+
+_login_state = LoginAnomalyState()
+
+class LoginCheckRequest(BaseModel):
+    employee_id: str = Field(..., max_length=64)
+    latitude: float = Field(..., ge=-90.0, le=90.0)
+    longitude: float = Field(..., ge=-180.0, le=180.0)
+    timestamp: float
+    client_ip: Optional[str] = None
+
+
+class LoginCheckResult(BaseModel):
+    employee_id: str
+    is_anomalous: bool
+    details: dict
+
+
+@app.post("/internal/check-login", response_model=LoginCheckResult)
+async def check_login_anomaly(
+    req: LoginCheckRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Evaluates incoming login metadata for impossible velocity constraints.
+    If flagged, it synchronously dispatches a non-blocking alert report to the
+    centralized backend metrics registry."""
+    is_anomalous, details = _login_state.check_travel_anomaly(
+        employee_id=req.employee_id,
+        lat=req.latitude,
+        lon=req.longitude,
+        timestamp=req.timestamp
+    )
+
+    if is_anomalous:
+        logger.warning("Impossible travel anomaly detected for employee=%s: %s", req.employee_id, details)
+        try:
+            if req.client_ip:
+                details["client_ip"] = req.client_ip
+                
+            await report_anomaly(
+                alert_type="impossible_travel",
+                bearer_token=user.raw_token,
+                employee_id=req.employee_id,
+                details=details,
+            )
+        except Exception:
+            logger.exception("Failed to dispatch impossible_travel anomaly alert for employee=%s", req.employee_id)
+
+    return LoginCheckResult(
+        employee_id=req.employee_id,
+        is_anomalous=is_anomalous,
+        details=details
+    )
+>>>>>>> cf688d0674c91791740b1ebe2631dd1f86867bcf

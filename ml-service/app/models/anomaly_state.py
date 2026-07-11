@@ -91,3 +91,51 @@ class InactivityState:
             self._alerted[tag_id] = True
             return True
         return False
+
+@dataclass
+class LoginAnomalyState:
+    """Tracks historical login metadata per employee to catch impossible
+    travel velocity spikes across geographically disparate access points."""
+
+    _last_login: dict = field(default_factory=dict)  # employee_id -> (lat, lon, timestamp)
+
+    def check_travel_anomaly(
+        self, employee_id: str, lat: float, lon: float, timestamp: float, max_speed_kmh: float = 900.0
+    ) -> tuple[bool, dict]:
+        """Evaluates whether an incoming login event implies a physically
+        impossible travel speed from the user's last recorded location.
+        Returns (is_anomalous, details_dict)."""
+        last = self._last_login.get(employee_id)
+        self._last_login[employee_id] = (lat, lon, timestamp)
+
+        if last is None:
+            return False, {}
+
+        last_lat, last_lon, last_time = last
+        time_delta_hours = (timestamp - last_time) / 3600.0
+
+        if time_delta_hours <= 0:
+            # Concurrent or out-of-order login events are highly suspicious
+            return True, {"error": "Concurrent login or zero time delta", "time_delta_sec": timestamp - last_time}
+
+        # Haversine formula to compute great-circle distance in kilometers
+        R = 6371.0
+        d_lat = math.radians(lat - last_lat)
+        d_lon = math.radians(lon - last_lon)
+        a = (math.sin(d_lat / 2) ** 2 +
+             math.cos(math.radians(last_lat)) * math.cos(math.radians(lat)) * math.sin(d_lon / 2) ** 2)
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        distance_km = R * c
+
+        calculated_speed = distance_km / time_delta_hours
+
+        if calculated_speed > max_speed_kmh:
+            return True, {
+                "distance_km": round(distance_km, 2),
+                "time_delta_hours": round(time_delta_hours, 3),
+                "calculated_speed_kmh": round(calculated_speed, 2),
+                "max_threshold_kmh": max_speed_kmh,
+                "previous_location": {"lat": last_lat, "lon": last_lon}
+            }
+
+        return False, {}

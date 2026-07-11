@@ -1,10 +1,9 @@
 """
 Fingerprinting model (Section 4.2, row 2 / Section 5).
 
-k-NN baseline first, as specified - simple, hard to get subtly wrong, and a
-sensible floor to beat before reaching for a neural net. Learns the
-building-specific mapping from an RSSI vector to true position, which beats
-pure trilateration math once walls/interference are involved.
+Upgraded from k-NN baseline to a Deep Neural Network (MLP Regressor). 
+Learns the building-specific non-linear mapping from an RSSI vector to true 
+position, handling wall interference and overlapping signal propagation profiles.
 
 Every trained model is validated against a held-out slice of the same walk
 BEFORE it is allowed to be saved/deployed - this file will refuse to persist
@@ -19,7 +18,7 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-from sklearn.neighbors import KNeighborsRegressor
+from sklearn.neural_network import MLPRegressor
 
 from app.models.train_mode import TrainingWalk, train_holdout_split
 
@@ -51,10 +50,20 @@ class ValidationReport:
 
 
 class FingerprintModel:
-    def __init__(self, beacon_ids: list[str], k: int = 5):
+    def __init__(self, beacon_ids: list[str], hidden_layer_sizes: tuple[int, ...] = (128, 64)):
         self.beacon_ids = beacon_ids
-        self.k = k
-        self._model = KNeighborsRegressor(n_neighbors=k, weights="distance")
+        self.hidden_layer_sizes = hidden_layer_sizes
+        
+        # Deep Neural Network multi-layer configuration
+        self._model = MLPRegressor(
+            hidden_layer_sizes=hidden_layer_sizes,
+            activation="relu",
+            solver="adam",
+            max_iter=500,
+            early_stopping=True,
+            validation_fraction=0.1,
+            random_state=42
+        )
         self._fitted = False
         self.last_validation: ValidationReport | None = None
 
@@ -72,6 +81,7 @@ class FingerprintModel:
 
         X_train, y_train, X_holdout, y_holdout = train_holdout_split(X, y, holdout_fraction)
 
+        # Train neural net model weights
         self._model.fit(X_train, y_train)
         self._fitted = True
 
@@ -100,7 +110,7 @@ class FingerprintModel:
 
     def save(self, dir_path: Path) -> None:
         """Refuses to save a model that hasn't passed validation - an
-        untested model must never silently become "the deployed model"."""
+        untested model must never silently become 'the deployed model'."""
         if not self._fitted or self.last_validation is None:
             raise RuntimeError("Refusing to save an unvalidated model")
         dir_path.mkdir(parents=True, exist_ok=True)
@@ -109,7 +119,7 @@ class FingerprintModel:
             json.dumps(
                 {
                     "beacon_ids": self.beacon_ids,
-                    "k": self.k,
+                    "hidden_layer_sizes": list(self.hidden_layer_sizes),
                     "validation": self.last_validation.as_dict(),
                 },
                 indent=2,
@@ -119,10 +129,10 @@ class FingerprintModel:
     @classmethod
     def load(cls, dir_path: Path) -> "FingerprintModel":
         meta = json.loads((dir_path / "meta.json").read_text())
-        instance = cls(beacon_ids=meta["beacon_ids"], k=meta["k"])
+        layer_sizes = tuple(meta.get("hidden_layer_sizes", [128, 64]))
+        
+        instance = cls(beacon_ids=meta["beacon_ids"], hidden_layer_sizes=layer_sizes)
         instance._model = joblib.load(dir_path / "model.joblib")
         instance._fitted = True
-        instance.last_validation = ValidationReport(**{
-            **meta["validation"],
-        })
+        instance.last_validation = ValidationReport(**meta["validation"])
         return instance

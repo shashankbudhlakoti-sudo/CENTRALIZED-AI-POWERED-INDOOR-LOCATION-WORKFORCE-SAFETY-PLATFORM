@@ -1,0 +1,167 @@
+/* Core Layout Conventions */
+.page {
+  padding: 24px;
+  background: #0B1220;
+  min-height: 100vh;
+  color: #E7ECF5;
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+.header {
+  margin-bottom: 24px;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+}
+
+.subtitle {
+  color: #7B879E;
+  font-size: 14px;
+  margin: 0;
+}
+
+/* ---------- Operations Summary Row ---------- */
+.summaryRow {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.summaryCard {
+  background: #121A2B;
+  border: 1px solid #2A3A55;
+  border-radius: 8px;
+  padding: 14px 18px;
+  min-width: 140px;
+}
+
+.summaryLabel {
+  color: #7B879E;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.summaryValue {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.summaryValue.ok { color: #3DDC84; }
+.summaryValue.warn { color: #F2A93B; }
+.summaryValue.critical { color: #F0455C; }
+
+/* ---------- Layout Split Grid ---------- */
+.opsGrid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 1024px) {
+  .opsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Table View ---------- */
+.tableCard {
+  background: #121A2B;
+  border: 1px solid #2A3A55;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #121A2B;
+}
+
+.table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #7B879E;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2A3A55;
+  font-weight: 500;
+}
+
+.table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid #1C2A42;
+  font-size: 13px;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+/* ---------- Live Status Dots ---------- */
+.statusDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.statusDot.ok { background: #3DDC84; }
+.statusDot.warn { background: #F2A93B; }
+.statusDot.critical { background: #F0455C; }
+.statusDot.offline { background: #5A6B87; }
+
+/* ---------- Side Incident Activity Feed (Signature Element) ---------- */
+.feedCard {
+  background: #121A2B;
+  border: 1px solid #2A3A55;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.feedTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 16px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #B9C3D6;
+}
+
+.alertList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.alertItem {
+  background: #1C2A42;
+  border-left: 4px solid #F0455C;
+  border-radius: 4px;
+  padding: 12px;
+  font-size: 13px;
+}
+
+.alertItem.warning {
+  border-left-color: #F2A93B;
+}
+
+.alertMeta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #7B879E;
+  margin-top: 6px;
+}

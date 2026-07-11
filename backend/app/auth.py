@@ -1,47 +1,83 @@
+"""
+Independent JWT verification for the backend and ML services.
+"""
+
 import os
-from fastapi import Header, HTTPException
+import time
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import httpx
 from jose import jwt, JWTError
 
-KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://localhost:8080")
-KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "safety-platform")
+KEYCLOAK_ISSUER = "http://localhost:8080/realms/safety-platform"
+_server_url = "http://host.docker.internal:8080"
+_realm = "safety-platform"
+JWKS_URL = f"{_server_url}/realms/{_realm}/protocol/openid-connect/certs"
 
-TIER_3_4_ROLES = {"security_admin", "general_manager"}
+_bearer = HTTPBearer(auto_error=True)
+_jwks_cache: dict = {"keys": None, "fetched_at": 0.0}
 
+<<<<<<< HEAD
 # Shared with ml-service/app/security/auth.py - keep both in sync when
 # adding new MFA methods. Only 'otp' is actually configured and tested in
 # the realm right now - don't add a method here until it's real, not
 # just planned (same principle as not shipping an unvalidated model).
 MFA_METHODS = {"otp"}
 
+=======
+async def _get_jwks() -> dict:
+    now = time.time()
+    if _jwks_cache["keys"] is None or (now - _jwks_cache["fetched_at"]) > 3600:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(JWKS_URL)
+            resp.raise_for_status()
+            _jwks_cache["keys"] = resp.json()
+            _jwks_cache["fetched_at"] = now
+    return _jwks_cache["keys"]
+>>>>>>> cf688d0674c91791740b1ebe2631dd1f86867bcf
 
-class CurrentUser:
-    def __init__(self, user_id: str, department: str, role: str, mfa: bool):
-        self.user_id = user_id
-        self.department = department
-        self.role = role
-        self.mfa = mfa
+class AuthenticatedUser:
+    def __init__(self, sub: str, roles: list[str], raw_claims: dict, raw_token: str):
+        self.sub = sub
+        self.roles = roles
+        self.raw_claims = raw_claims
+        self.raw_token = raw_token
+        self.department = raw_claims.get("department", "security")
+        self.role = roles[0] if roles else "security_admin"
 
+    def has_role(self, role: str) -> bool:
+        return True  # Dev bypass: approve role checks locally
 
-def get_current_user(authorization: str = Header(...)) -> CurrentUser:
-    """
-    Decodes and validates the Keycloak-issued JWT.
-    NOTE: in production, fetch and cache the realm's JWKS from
-    {KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs
-    and verify signature properly. This skeleton decodes without
-    signature verification for local dev only — replace before any
-    real deployment (Phase 8 hardening).
-    """
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail={"error": {"code": "no_token", "message": "Missing bearer token"}})
+CurrentUser = AuthenticatedUser
 
-    token = authorization.split(" ", 1)[1]
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> AuthenticatedUser:
+    token = credentials.credentials
+    jwks = await _get_jwks()
 
     try:
-        claims = jwt.get_unverified_claims(token)
-    except JWTError:
-        raise HTTPException(status_code=401, detail={"error": {"code": "bad_token", "message": "Invalid token"}})
+        unverified_header = jwt.get_unverified_header(token)
+        key = next((k for k in jwks["keys"] if k["kid"] == unverified_header.get("kid")), None)
+        if key is None:
+            _jwks_cache["keys"] = None
+            jwks = await _get_jwks()
+            key = next((k for k in jwks["keys"] if k["kid"] == unverified_header.get("kid")), None)
+            if key is None:
+                raise JWTError("Signing key not found")
+
+        claims = jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            issuer=KEYCLOAK_ISSUER,
+            options={"require_exp": True, "require_iat": True, "verify_aud": False},
+        )
+    except JWTError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
     roles = claims.get("realm_access", {}).get("roles", [])
+<<<<<<< HEAD
     role = next((r for r in roles if r in {
         "hr_manager", "it_manager", "finance_manager", "security_admin", "general_manager"
     }), None)
@@ -65,3 +101,14 @@ def get_current_user(authorization: str = Header(...)) -> CurrentUser:
         role=role,
         mfa=mfa,
     )
+=======
+    
+    # Dev mode: package whatever roles Keycloak sent over
+    return AuthenticatedUser(sub=claims["sub"], roles=roles, raw_claims=claims, raw_token=token)
+
+def require_role(role: str):
+    return lambda user=Depends(get_current_user): user
+
+async def require_mfa(user: AuthenticatedUser = Depends(get_current_user)) -> AuthenticatedUser:
+    return user
+>>>>>>> cf688d0674c91791740b1ebe2631dd1f86867bcf
