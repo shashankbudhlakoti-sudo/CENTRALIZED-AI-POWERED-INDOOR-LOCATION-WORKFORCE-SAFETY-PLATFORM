@@ -1,0 +1,172 @@
+.container {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: #e4e7ec;
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  color: #f2f4f7;
+}
+
+.subtitle {
+  margin: 0;
+  color: #7b8494;
+  font-size: 13.5px;
+}
+
+.refreshButton {
+  background: #1e242e;
+  border: 1px solid #2c3440;
+  color: #cbd2dc;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.refreshButton:hover {
+  background: #262e3a;
+}
+
+.errorBanner {
+  background: #3a1f1f;
+  border: 1px solid #5c2e2e;
+  color: #f2b8b5;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.warningBanner {
+  background: #3a3319;
+  border: 1px solid #5c4e1f;
+  color: #f2c94c;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 240px;
+  background: #1a1f28;
+  border: 1px solid #2c3440;
+  color: #e4e7ec;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13.5px;
+}
+
+.searchInput:focus {
+  outline: 2px solid #6d9bf7;
+  outline-offset: -1px;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #9aa4b2;
+  white-space: nowrap;
+}
+
+.emptyState {
+  padding: 32px 0;
+  text-align: center;
+  color: #6b7280;
+  font-size: 13.5px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #14181f;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13.5px;
+}
+
+.table th {
+  text-align: left;
+  padding: 10px 14px;
+  background: #1a1f28;
+  color: #7b8494;
+  font-weight: 600;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid #262d38;
+}
+
+.table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #1e242e;
+  vertical-align: middle;
+}
+
+.table tbody tr:hover {
+  background: #1a1f28;
+}
+
+.nameCell {
+  font-weight: 600;
+  color: #e4e7ec;
+}
+
+.emailCell {
+  font-size: 12px;
+  color: #7b8494;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.badgeActive {
+  background: #14351f;
+  color: #5fd88a;
+}
+
+.badgeInactive {
+  background: #23262e;
+  color: #9aa4b2;
+}
+
+.badgeYes {
+  background: #14351f;
+  color: #5fd88a;
+}
+
+.badgeNo {
+  background: #3a1f1f;
+  color: #f2837e;
+}
+
+.footer {
+  color: #6b7280;
+  font-size: 12px;
+}
