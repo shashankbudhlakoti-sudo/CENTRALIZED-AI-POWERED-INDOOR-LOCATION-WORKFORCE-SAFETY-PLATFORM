@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   db:
-    image: postgis/postgis:16-3.4
+    build: ./postgres
     container_name: safety-db
     restart: unless-stopped
     environment:
@@ -46,6 +46,15 @@ services:
       - keycloak_data:/opt/keycloak/data
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
 
+  adminer:
+    image: adminer:latest
+    container_name: safety-adminer
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "8081:8080"
+
   backend:
     build: ../backend
     container_name: safety-backend
@@ -54,7 +63,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg://safety:safety_dev_pw@db:5432/safety_platform
+      DATABASE_URL: postgresql://safety:safety_dev_pw@db:5432/safety_platform
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       KEYCLOAK_URL: http://keycloak:8080
