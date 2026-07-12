@@ -1,11 +1,10 @@
-// Polls a PROPOSED GET /it/device-health endpoint - not yet confirmed with
-// Shashank. Path adapted from the scaffold's original TODO comment
-// (GET /api/it/device-health) to match the real /api/v1 prefix confirmed
-// working for positions/alerts/checkpoints. If this 404s, that just means
-// the endpoint doesn't exist under this exact path yet - the panel will
-// show an honest error banner rather than fail silently (see apiClient.js).
+// Polls GET /it/device-health - CONFIRMED shape from Shashank (real, built):
+// { total_tags, active_tags, low_battery: [tag_id...], possibly_offline: [tag_id...] }
+// A summary object with two flat tag_id lists, NOT per-device rows with
+// battery_pct/last_seen_at - the earlier version of this hook assumed a
+// richer per-device shape that doesn't match what was actually built.
 //
-// Device-only scope, no employee identity: IT sees tag_uid/battery/uptime,
+// Device-only scope, no employee identity: IT sees tag_id/counts only,
 // never which employee a tag belongs to (data minimization, Section 7).
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../auth/apiClient";
@@ -13,7 +12,7 @@ import { apiFetch } from "../auth/apiClient";
 const POLL_INTERVAL_MS = 10000;
 
 export function useDeviceHealth() {
-  const [devices, setDevices] = useState([]);
+  const [summary, setSummary] = useState({ total_tags: 0, active_tags: 0, low_battery: [], possibly_offline: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const pollRef = useRef(null);
@@ -25,7 +24,7 @@ export function useDeviceHealth() {
       try {
         const data = await apiFetch("/it/device-health");
         if (!cancelled) {
-          setDevices(data);
+          setSummary(data);
           setError(null);
         }
       } catch (err) {
@@ -43,5 +42,5 @@ export function useDeviceHealth() {
     };
   }, []);
 
-  return { devices, loading, error };
+  return { summary, loading, error };
 }

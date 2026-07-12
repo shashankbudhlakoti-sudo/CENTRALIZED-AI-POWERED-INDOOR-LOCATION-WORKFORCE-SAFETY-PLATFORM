@@ -1,31 +1,16 @@
 // IT Panel - Section 7: sees device/system health only, never employee
 // identity tied to positions (device IDs only).
+//
+// Real endpoint (GET /it/device-health, verified against main.py) returns
+// summary counts + flat tag_id lists, NOT per-device rows with battery
+// percentage/last-seen timestamps - there's no richer per-device detail
+// available, so this renders ID chips rather than a detailed table.
 import { useDeviceHealth } from "../hooks/useDeviceHealth";
 import styles from "./OpsPanel.module.css";
 
-const STALE_AFTER_MS = 60_000; // placeholder - real beacon ping interval should inform this
-const OFFLINE_AFTER_MS = 300_000;
-
-function freshness(lastSeenAt) {
-  if (!lastSeenAt) return "offline";
-  const ageMs = Date.now() - new Date(lastSeenAt).getTime();
-  if (ageMs > OFFLINE_AFTER_MS) return "offline";
-  if (ageMs > STALE_AFTER_MS) return "warn";
-  return "ok";
-}
-
-function batteryClass(pct) {
-  if (pct == null) return "";
-  if (pct < 20) return "critical";
-  if (pct < 40) return "warn";
-  return "ok";
-}
-
 export default function ITPanel() {
-  const { devices, loading, error } = useDeviceHealth();
-
-  const online = devices.filter((d) => freshness(d.last_seen_at) === "ok").length;
-  const lowBattery = devices.filter((d) => d.battery_pct != null && d.battery_pct < 20).length;
+  const { summary, loading, error } = useDeviceHealth();
+  const { total_tags, active_tags, low_battery, possibly_offline } = summary;
 
   return (
     <div className={styles.page}>
@@ -36,70 +21,67 @@ export default function ITPanel() {
         </p>
       </div>
 
-      <div className={styles.summaryRow}>
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryLabel}>Devices online</div>
-          <div className={`${styles.summaryValue} ${styles.ok}`}>{online}</div>
-        </div>
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryLabel}>Total devices</div>
-          <div className={styles.summaryValue}>{devices.length}</div>
-        </div>
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryLabel}>Low battery (&lt;20%)</div>
-          <div className={`${styles.summaryValue} ${lowBattery > 0 ? styles.critical : styles.ok}`}>
-            {lowBattery}
-          </div>
-        </div>
-      </div>
-
       {error && (
         <div className={styles.errorBanner}>
           Couldn't load device health: {error}
         </div>
       )}
 
-      {loading && devices.length === 0 && !error && (
+      {loading && !error && (
         <div className={styles.emptyState}>Loading device health…</div>
       )}
 
-      {!loading && devices.length === 0 && !error && (
-        <div className={styles.emptyState}>No devices reporting yet.</div>
-      )}
+      {!loading && !error && (
+        <>
+          <div className={styles.summaryRow}>
+            <div className={styles.summaryCard}>
+              <div className={styles.summaryLabel}>Total tags</div>
+              <div className={styles.summaryValue}>{total_tags}</div>
+            </div>
+            <div className={styles.summaryCard}>
+              <div className={styles.summaryLabel}>Active tags</div>
+              <div className={`${styles.summaryValue} ${styles.ok}`}>{active_tags}</div>
+            </div>
+            <div className={styles.summaryCard}>
+              <div className={styles.summaryLabel}>Low battery (&lt;20%)</div>
+              <div className={`${styles.summaryValue} ${low_battery.length > 0 ? styles.critical : styles.ok}`}>
+                {low_battery.length}
+              </div>
+            </div>
+            <div className={styles.summaryCard}>
+              <div className={styles.summaryLabel}>Possibly offline (&gt;1h silent)</div>
+              <div className={`${styles.summaryValue} ${possibly_offline.length > 0 ? styles.warn : styles.ok}`}>
+                {possibly_offline.length}
+              </div>
+            </div>
+          </div>
 
-      {devices.length > 0 && (
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Tag</th>
-              <th>Battery</th>
-              <th>Last seen</th>
-              <th>Zone</th>
-            </tr>
-          </thead>
-          <tbody>
-            {devices.map((d) => {
-              const fresh = freshness(d.last_seen_at);
-              return (
-                <tr key={d.tag_id ?? d.tag_uid}>
-                  <td>
-                    <span className={`${styles.statusDot} ${styles[fresh]}`} />
-                    {fresh === "ok" ? "Online" : fresh === "warn" ? "Stale" : "Offline"}
-                  </td>
-                  <td className={styles.mono}>{d.tag_uid}</td>
-                  <td className={`${styles.mono} ${styles[batteryClass(d.battery_pct)] ?? ""}`}>
-                    {d.battery_pct != null ? `${d.battery_pct}%` : "—"}
-                  </td>
-                  <td className={styles.mono}>
-                    {d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : "Never"}
-                  </td>
-                  <td>{d.zone_name ?? "—"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+          {total_tags === 0 ? (
+            <div className={styles.emptyState}>No devices reporting yet.</div>
+          ) : (
+            <>
+              {low_battery.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div className={styles.summaryLabel} style={{ marginBottom: 8 }}>Low battery tag IDs</div>
+                  <div className={styles.mono} style={{ color: "#F0455C", wordBreak: "break-all" }}>
+                    {low_battery.join(", ")}
+                  </div>
+                </div>
+              )}
+              {possibly_offline.length > 0 && (
+                <div>
+                  <div className={styles.summaryLabel} style={{ marginBottom: 8 }}>Possibly offline tag IDs</div>
+                  <div className={styles.mono} style={{ color: "#F2A93B", wordBreak: "break-all" }}>
+                    {possibly_offline.join(", ")}
+                  </div>
+                </div>
+              )}
+              {low_battery.length === 0 && possibly_offline.length === 0 && (
+                <div className={styles.emptyState}>All tags healthy - no low battery or offline devices.</div>
+              )}
+            </>
+          )}
+        </>
       )}
     </div>
   );

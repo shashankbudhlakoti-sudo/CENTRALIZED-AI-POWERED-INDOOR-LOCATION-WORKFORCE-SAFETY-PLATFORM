@@ -1,19 +1,16 @@
-// Two different reliability tiers in this one hook, worth being explicit
-// about:
+// Two different reliability tiers, worth being explicit about:
 //
 // - alertCount / mismatchCount: built from GET /alerts and GET /checkpoints,
-//   which are ALREADY CONFIRMED working (same endpoints AlertFeed and
-//   CheckpointViewer use successfully today). These will show real numbers
-//   immediately, no backend changes needed.
-// - departments: from a PROPOSED GET /manager/department-summaries
-//   endpoint, adapted from the scaffold's original TODO comment
-//   (GET /api/manager/department-summaries) - NOT yet confirmed with
-//   Shashank. Will show an honest error banner if it 404s, independent of
-//   the confirmed alert/checkpoint counts above still working fine.
+//   already confirmed working (same endpoints AlertFeed/CheckpointViewer use).
+// - departments: from GET /manager/department-summaries - CONFIRMED shape
+//   from main.py (real, verified against actual route code):
+//   { departments: [{ department, employee_count, open_alerts }] }
+//   No manager_name or avg_attendance_pct - those fields don't exist in
+//   the real endpoint, the earlier assumption included fields that aren't
+//   actually returned.
 //
 // Manager sees organizational summary only (department-level rollups),
-// never Security's operational detail (exact coordinates, live map) -
-// Section 11 tiering.
+// never Security's operational detail (exact coordinates, live map).
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../auth/apiClient";
 
@@ -32,9 +29,6 @@ export function useManagerOverview() {
     let cancelled = false;
 
     async function fetchOnce() {
-      // Confirmed-working endpoints - fetched independently of the
-      // proposed one below, so a 404 on department-summaries never takes
-      // down the real alert/mismatch counts.
       try {
         const [alerts, checkpoints] = await Promise.all([
           apiFetch("/alerts?acknowledged=false"),
@@ -52,7 +46,7 @@ export function useManagerOverview() {
       try {
         const data = await apiFetch("/manager/department-summaries");
         if (!cancelled) {
-          setDepartments(data);
+          setDepartments(data.departments ?? []);
           setDepartmentsError(null);
         }
       } catch (err) {

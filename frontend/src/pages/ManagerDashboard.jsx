@@ -1,6 +1,11 @@
 // General Manager dashboard - Tier 4, organizational visibility
 // (department summaries, manager directory) rather than Security's
 // operational visibility (exact coordinates, live map) - Section 11.
+//
+// Real endpoint (GET /manager/department-summaries, verified against
+// main.py) returns { departments: [{ department, employee_count,
+// open_alerts }] } - no manager_name or avg_attendance_pct field exists,
+// those were an earlier unverified assumption.
 import { useManagerOverview } from "../hooks/useManagerOverview";
 import styles from "./OpsPanel.module.css";
 
@@ -17,9 +22,6 @@ export default function ManagerDashboard() {
         </p>
       </div>
 
-      {/* This row is built from GET /alerts and GET /checkpoints, the same
-          already-confirmed-working endpoints AlertFeed and CheckpointViewer
-          use - real numbers today, independent of the department grid below. */}
       {countsError ? (
         <div className={styles.errorBanner}>Couldn't load live counts: {countsError}</div>
       ) : (
@@ -60,30 +62,21 @@ export default function ManagerDashboard() {
       {departments.length > 0 && (
         <div className={styles.tileGrid}>
           {departments.map((dept) => (
-            <div className={styles.tile} key={dept.department_name}>
+            <div className={styles.tile} key={dept.department}>
               <div className={styles.tileHeader}>
-                <span className={styles.tileName}>{dept.department_name}</span>
+                <span className={styles.tileName}>{dept.department}</span>
               </div>
-              <div className={styles.tileManager}>{dept.manager_name ?? "No manager assigned"}</div>
               <div style={{ marginTop: 10 }}>
-                {dept.employee_count != null && (
-                  <div className={styles.tileMetric}>
-                    <span>Employees</span>
-                    <span className={styles.tileMetricValue}>{dept.employee_count}</span>
-                  </div>
-                )}
-                {dept.alert_count != null && (
-                  <div className={styles.tileMetric}>
-                    <span>Alerts</span>
-                    <span className={styles.tileMetricValue}>{dept.alert_count}</span>
-                  </div>
-                )}
-                {dept.avg_attendance_pct != null && (
-                  <div className={styles.tileMetric}>
-                    <span>Avg attendance</span>
-                    <span className={styles.tileMetricValue}>{dept.avg_attendance_pct}%</span>
-                  </div>
-                )}
+                <div className={styles.tileMetric}>
+                  <span>Employees</span>
+                  <span className={styles.tileMetricValue}>{dept.employee_count}</span>
+                </div>
+                <div className={styles.tileMetric}>
+                  <span>Open alerts</span>
+                  <span className={styles.tileMetricValue} style={dept.open_alerts > 0 ? { color: "#F2A93B" } : {}}>
+                    {dept.open_alerts}
+                  </span>
+                </div>
               </div>
             </div>
           ))}

@@ -1,16 +1,16 @@
-// Polls a PROPOSED GET /finance/assets endpoint - not yet confirmed with
-// Shashank. Path adapted from the scaffold's original TODO comment
-// (GET /api/finance/assets) to match the real /api/v1 prefix.
+// Polls GET /finance/assets - CONFIRMED shape from main.py (real, verified):
+// { total_assets, assigned, unassigned }
 //
-// Zero employee location data of any kind (Section 7) - this is hardware
-// asset/cost data only (tag inventory, procurement, replacement records).
+// Three summary numbers only - no per-asset cost/purchase-date/type data
+// exists in the real endpoint (the earlier per-asset ledger assumption
+// doesn't match reality). Zero employee/location data either way.
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../auth/apiClient";
 
-const POLL_INTERVAL_MS = 30000; // asset data changes slowly - no need to poll as often
+const POLL_INTERVAL_MS = 30000;
 
 export function useAssetInventory() {
-  const [assets, setAssets] = useState([]);
+  const [summary, setSummary] = useState({ total_assets: 0, assigned: 0, unassigned: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const pollRef = useRef(null);
@@ -22,7 +22,7 @@ export function useAssetInventory() {
       try {
         const data = await apiFetch("/finance/assets");
         if (!cancelled) {
-          setAssets(data);
+          setSummary(data);
           setError(null);
         }
       } catch (err) {
@@ -40,5 +40,5 @@ export function useAssetInventory() {
     };
   }, []);
 
-  return { assets, loading, error };
+  return { summary, loading, error };
 }

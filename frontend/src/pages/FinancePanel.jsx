@@ -1,28 +1,17 @@
-// Finance Panel - sees asset/cost data only, zero employee location data
-// of any kind (Section 7).
+// Finance Panel - sees asset counts only, zero employee location data of
+// any kind (Section 7).
+//
+// Real endpoint (GET /finance/assets, verified against main.py) returns
+// exactly three numbers: total_assets, assigned, unassigned. No per-asset
+// cost/purchase-date/type data exists - the earlier asset-ledger-table
+// assumption doesn't match what the backend actually returns.
 import { useAssetInventory } from "../hooks/useAssetInventory";
 import styles from "./OpsPanel.module.css";
 
-function formatCurrency(value) {
-  if (value == null) return "—";
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(value);
-}
-
-function statusClass(status) {
-  if (status === "active") return "ok";
-  if (status === "in_repair") return "warn";
-  if (status === "retired") return "offline";
-  return "";
-}
-
 export default function FinancePanel() {
-  const { assets, loading, error } = useAssetInventory();
-
-  const totalValue = assets.reduce((sum, a) => sum + (a.purchase_cost ?? 0), 0);
-  const needingReplacement = assets.filter((a) => {
-    if (!a.replacement_due_date) return false;
-    return new Date(a.replacement_due_date) < new Date();
-  }).length;
+  const { summary, loading, error } = useAssetInventory();
+  const { total_assets, assigned, unassigned } = summary;
+  const assignedPct = total_assets > 0 ? Math.round((assigned / total_assets) * 100) : 0;
 
   return (
     <div className={styles.page}>
@@ -33,71 +22,53 @@ export default function FinancePanel() {
         </p>
       </div>
 
-      <div className={styles.summaryRow}>
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryLabel}>Total assets</div>
-          <div className={styles.summaryValue}>{assets.length}</div>
-        </div>
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryLabel}>Total value</div>
-          <div className={styles.summaryValue}>{formatCurrency(totalValue)}</div>
-        </div>
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryLabel}>Past replacement date</div>
-          <div className={`${styles.summaryValue} ${needingReplacement > 0 ? styles.warn : styles.ok}`}>
-            {needingReplacement}
-          </div>
-        </div>
-      </div>
-
       {error && (
         <div className={styles.errorBanner}>
           Couldn't load asset inventory: {error}
         </div>
       )}
 
-      {loading && assets.length === 0 && !error && (
+      {loading && !error && (
         <div className={styles.emptyState}>Loading asset inventory…</div>
       )}
 
-      {!loading && assets.length === 0 && !error && (
+      {!loading && !error && total_assets === 0 && (
         <div className={styles.emptyState}>No assets on record.</div>
       )}
 
-      {assets.length > 0 && (
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Asset</th>
-              <th>Type</th>
-              <th style={{ textAlign: "right" }}>Cost</th>
-              <th>Purchased</th>
-              <th>Replacement due</th>
-            </tr>
-          </thead>
-          <tbody>
-            {assets.map((a) => (
-              <tr key={a.asset_id}>
-                <td>
-                  <span className={`${styles.statusDot} ${styles[statusClass(a.status)] ?? ""}`} />
-                  {a.status}
-                </td>
-                <td className={styles.mono}>{a.asset_id}</td>
-                <td>{a.asset_type}</td>
-                <td className={styles.mono} style={{ textAlign: "right" }}>
-                  {formatCurrency(a.purchase_cost)}
-                </td>
-                <td className={styles.mono}>
-                  {a.purchase_date ? new Date(a.purchase_date).toLocaleDateString() : "—"}
-                </td>
-                <td className={styles.mono}>
-                  {a.replacement_due_date ? new Date(a.replacement_due_date).toLocaleDateString() : "—"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {!loading && !error && total_assets > 0 && (
+        <>
+          <div className={styles.summaryRow}>
+            <div className={styles.summaryCard}>
+              <div className={styles.summaryLabel}>Total assets</div>
+              <div className={styles.summaryValue}>{total_assets}</div>
+            </div>
+            <div className={styles.summaryCard}>
+              <div className={styles.summaryLabel}>Assigned</div>
+              <div className={`${styles.summaryValue} ${styles.ok}`}>{assigned}</div>
+            </div>
+            <div className={styles.summaryCard}>
+              <div className={styles.summaryLabel}>Unassigned</div>
+              <div className={styles.summaryValue}>{unassigned}</div>
+            </div>
+          </div>
+
+          <div className={styles.summaryLabel} style={{ marginBottom: 8 }}>
+            Assignment rate: {assignedPct}%
+          </div>
+          <div className={styles.shiftBar} style={{ width: "100%" }}>
+            <div
+              className={styles.shiftBarSegment}
+              style={{ width: `${assignedPct}%`, background: "#3DDC84" }}
+              title={`Assigned: ${assigned}`}
+            />
+            <div
+              className={styles.shiftBarSegment}
+              style={{ width: `${100 - assignedPct}%`, background: "#5A6B87" }}
+              title={`Unassigned: ${unassigned}`}
+            />
+          </div>
+        </>
       )}
     </div>
   );
