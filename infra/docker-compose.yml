@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   db:
-    build: ./postgres
+    image: pgvector/pgvector:16-pgorg
     container_name: safety-db
     restart: unless-stopped
     environment:
