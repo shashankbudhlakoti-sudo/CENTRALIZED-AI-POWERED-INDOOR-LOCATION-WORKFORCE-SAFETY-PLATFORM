@@ -7,6 +7,11 @@ KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "safety-platform")
 
 TIER_3_4_ROLES = {"security_admin", "general_manager"}
 
+# Shared with ml-service/app/security/auth.py - keep both in sync when
+# adding new MFA methods. Only 'otp' is actually configured and tested in
+# the realm right now.
+MFA_METHODS = {"otp"}
+
 
 class CurrentUser:
     def __init__(self, user_id: str, department: str, role: str, mfa: bool):
@@ -43,17 +48,28 @@ def get_current_user(authorization: str = Header(...)) -> CurrentUser:
     if not role:
         raise HTTPException(status_code=403, detail={"error": {"code": "no_role", "message": "No recognized role in token"}})
 
-    # TEMPORARY: mfa enforcement below is disabled pending a real fix.
-    # The realm's step-up auth config has a conflict (two "Conditional OTP
-    # Check" authenticatorConfig entries with the same alias, only one has
-    # the "mfa" reference value set) — acr/amr claims come back empty even
-    # after real TOTP setup. Rather than guess at a fix from exported JSON,
-    # this needs live debugging in Keycloak's UI. Tracked as a Phase 8
-    # hardening item — do not ship to real deployment with this disabled.
-    mfa = claims.get("acr") == "mfa"
+    # amr (Authentication Methods References) is a standard OIDC claim
+    # listing which auth methods were actually used - e.g. ["pwd"] or
+    # ["pwd", "otp"]. acr does NOT reliably contain the literal string
+    # "mfa" (Keycloak emits numeric-string values like "0"/"1" by default),
+    # so checking acr == "mfa" always evaluates False regardless of
+    # whether OTP actually happened.
+    #
+    # CONFIRMED WORKING 2026-07-12: real OTP login produces amr: ["otp"],
+    # verified against a fully-reset Keycloak volume (docker compose down -v
+    # required - a plain `restart` reuses the old session/volume state and
+    # will show stale/empty amr, which is what caused the false "broken
+    # realm config" diagnosis earlier - the realm config is fine, the test
+    # just needs a genuine fresh session against a genuinely fresh volume).
+    #
+    # If this claim comes back empty again: first confirm you did a full
+    # `docker compose down -v` + fresh login in a private browser window
+    # before assuming the realm itself is broken.
+    amr = set(claims.get("amr", []))
+    mfa = bool(amr & MFA_METHODS)
+
     if role in TIER_3_4_ROLES and not mfa:
-        pass  # TODO: re-enable once realm ACR/AMR config is fixed
-        # raise HTTPException(status_code=403, detail={"error": {"code": "mfa_required", "message": "MFA required for this role"}})
+        raise HTTPException(status_code=403, detail={"error": {"code": "mfa_required", "message": "MFA required for this role"}})
 
     return CurrentUser(
         user_id=claims.get("sub", ""),
