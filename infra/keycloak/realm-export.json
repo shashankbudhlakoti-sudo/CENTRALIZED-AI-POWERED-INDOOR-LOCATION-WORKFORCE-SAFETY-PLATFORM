@@ -519,6 +519,116 @@
       ],
       "notBefore": 0,
       "groups": []
+    },
+    {
+      "username": "hr-test",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "hr-test@example.com",
+      "firstName": "HR",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "TestPass123!",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
+      ],
+      "realmRoles": [
+        "default-roles-safety-platform",
+        "hr_manager"
+      ]
+    },
+    {
+      "username": "it-test",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "it-test@example.com",
+      "firstName": "IT",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "TestPass123!",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
+      ],
+      "realmRoles": [
+        "default-roles-safety-platform",
+        "it_manager"
+      ]
+    },
+    {
+      "username": "finance-test",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "finance-test@example.com",
+      "firstName": "Finance",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "TestPass123!",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
+      ],
+      "realmRoles": [
+        "default-roles-safety-platform",
+        "finance_manager"
+      ]
+    },
+    {
+      "username": "security-test",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "security-test@example.com",
+      "firstName": "Security",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "TestPass123!",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
+      ],
+      "realmRoles": [
+        "default-roles-safety-platform",
+        "security_admin"
+      ]
+    },
+    {
+      "username": "manager-test",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "manager-test@example.com",
+      "firstName": "General",
+      "lastName": "Manager",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "TestPass123!",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
+      ],
+      "realmRoles": [
+        "default-roles-safety-platform",
+        "general_manager"
+      ]
     }
   ],
   "scopeMappings": [
@@ -662,7 +772,9 @@
       "publicClient": true,
       "frontchannelLogout": false,
       "protocol": "openid-connect",
-      "attributes": {},
+      "attributes": {
+        "post.logout.redirect.uris": "+"
+      },
       "authenticationFlowBindingOverrides": {},
       "fullScopeAllowed": false,
       "nodeReRegistrationTimeout": 0,
@@ -701,7 +813,9 @@
       "publicClient": false,
       "frontchannelLogout": false,
       "protocol": "openid-connect",
-      "attributes": {},
+      "attributes": {
+        "post.logout.redirect.uris": "+"
+      },
       "authenticationFlowBindingOverrides": {},
       "fullScopeAllowed": false,
       "nodeReRegistrationTimeout": 0,
@@ -733,10 +847,10 @@
       "alwaysDisplayInConsole": false,
       "clientAuthenticatorType": "client-secret",
       "redirectUris": [
-        "http://localhost:3000/*"
+        "http://localhost:5173/*"
       ],
       "webOrigins": [
-        "http://localhost:3000"
+        "http://localhost:5173"
       ],
       "notBefore": 0,
       "bearerOnly": false,
@@ -751,12 +865,28 @@
       "attributes": {
         "oidc.ciba.grant.enabled": "false",
         "backchannel.logout.session.required": "true",
+        "post.logout.redirect.uris": "http://localhost:5173/*",
         "oauth2.device.authorization.grant.enabled": "false",
+        "display.on.consent.screen": "false",
         "backchannel.logout.revoke.offline.tokens": "false"
       },
       "authenticationFlowBindingOverrides": {},
       "fullScopeAllowed": true,
       "nodeReRegistrationTimeout": -1,
+      "protocolMappers": [
+        {
+          "id": "6c9dc616-20a8-4424-a21f-55db2592a251",
+          "name": "amr-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-amr-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "true",
+            "lightweight.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ],
       "defaultClientScopes": [
         "web-origins",
         "acr",
@@ -805,6 +935,7 @@
         "oidc.ciba.grant.enabled": "false",
         "client.secret.creation.time": "1783491746",
         "backchannel.logout.session.required": "true",
+        "post.logout.redirect.uris": "+",
         "oauth2.device.authorization.grant.enabled": "false",
         "backchannel.logout.revoke.offline.tokens": "false"
       },
@@ -820,8 +951,9 @@
           "consentRequired": false,
           "config": {
             "user.session.note": "client_id",
-            "id.token.claim": "true",
             "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
             "access.token.claim": "true",
             "claim.name": "client_id",
             "jsonType.label": "String"
@@ -835,8 +967,9 @@
           "consentRequired": false,
           "config": {
             "user.session.note": "clientAddress",
-            "id.token.claim": "true",
             "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
             "access.token.claim": "true",
             "claim.name": "clientAddress",
             "jsonType.label": "String"
@@ -850,8 +983,9 @@
           "consentRequired": false,
           "config": {
             "user.session.note": "clientHost",
-            "id.token.claim": "true",
             "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
             "access.token.claim": "true",
             "claim.name": "clientHost",
             "jsonType.label": "String"
@@ -893,7 +1027,9 @@
       "publicClient": false,
       "frontchannelLogout": false,
       "protocol": "openid-connect",
-      "attributes": {},
+      "attributes": {
+        "post.logout.redirect.uris": "+"
+      },
       "authenticationFlowBindingOverrides": {},
       "fullScopeAllowed": false,
       "nodeReRegistrationTimeout": 0,
@@ -945,6 +1081,7 @@
         "oidc.ciba.grant.enabled": "false",
         "client.secret.creation.time": "1783491395",
         "backchannel.logout.session.required": "true",
+        "post.logout.redirect.uris": "+",
         "oauth2.device.authorization.grant.enabled": "false",
         "backchannel.logout.revoke.offline.tokens": "false"
       },
@@ -1095,8 +1232,9 @@
           "consentRequired": false,
           "config": {
             "user.session.note": "AUTH_TIME",
-            "id.token.claim": "true",
             "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
             "access.token.claim": "true",
             "claim.name": "auth_time",
             "jsonType.label": "long"
@@ -1202,7 +1340,8 @@
           "config": {
             "id.token.claim": "true",
             "introspection.token.claim": "true",
-            "access.token.claim": "true"
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
           }
         }
       ]
@@ -1600,6 +1739,7 @@
           "config": {
             "introspection.token.claim": "true",
             "multivalued": "true",
+            "userinfo.token.claim": "true",
             "user.attribute": "foo",
             "id.token.claim": "true",
             "access.token.claim": "true",
@@ -1683,14 +1823,14 @@
         "subComponents": {},
         "config": {
           "allowed-protocol-mapper-types": [
+            "oidc-sha256-pairwise-sub-mapper",
+            "oidc-full-name-mapper",
+            "oidc-usermodel-property-mapper",
+            "oidc-usermodel-attribute-mapper",
+            "saml-role-list-mapper",
             "saml-user-property-mapper",
             "oidc-address-mapper",
-            "saml-role-list-mapper",
-            "oidc-full-name-mapper",
-            "saml-user-attribute-mapper",
-            "oidc-sha256-pairwise-sub-mapper",
-            "oidc-usermodel-property-mapper",
-            "oidc-usermodel-attribute-mapper"
+            "saml-user-attribute-mapper"
           ]
         }
       },
@@ -1734,14 +1874,14 @@
         "subComponents": {},
         "config": {
           "allowed-protocol-mapper-types": [
-            "oidc-usermodel-attribute-mapper",
-            "oidc-usermodel-property-mapper",
+            "oidc-address-mapper",
             "oidc-sha256-pairwise-sub-mapper",
+            "oidc-usermodel-property-mapper",
             "saml-role-list-mapper",
             "oidc-full-name-mapper",
             "saml-user-property-mapper",
-            "oidc-address-mapper",
-            "saml-user-attribute-mapper"
+            "saml-user-attribute-mapper",
+            "oidc-usermodel-attribute-mapper"
           ]
         }
       },
@@ -1872,6 +2012,7 @@
       "builtIn": true,
       "authenticationExecutions": [
         {
+          "authenticatorConfig": "Conditional OTP Check",
           "authenticator": "conditional-user-configured",
           "authenticatorFlow": false,
           "requirement": "REQUIRED",
@@ -1880,6 +2021,7 @@
           "userSetupAllowed": false
         },
         {
+          "authenticatorConfig": "OTP Form Config",
           "authenticator": "auth-otp-form",
           "authenticatorFlow": false,
           "requirement": "REQUIRED",
@@ -2218,6 +2360,7 @@
       "builtIn": true,
       "authenticationExecutions": [
         {
+          "authenticatorConfig": "Conditional - Level of Authentication",
           "authenticator": "auth-username-password-form",
           "authenticatorFlow": false,
           "requirement": "REQUIRED",
@@ -2226,6 +2369,7 @@
           "userSetupAllowed": false
         },
         {
+          "authenticatorConfig": "Conditional OTP Check",
           "authenticatorFlow": true,
           "requirement": "CONDITIONAL",
           "priority": 20,
@@ -2359,6 +2503,32 @@
   ],
   "authenticatorConfig": [
     {
+      "id": "300cafbb-04a0-4f7f-b154-80df6ba95fd6",
+      "alias": "Conditional - Level of Authentication",
+      "config": {
+        "default.reference.value": "pwd"
+      }
+    },
+    {
+      "id": "c435d45f-6cbe-4481-a946-435d79d638ff",
+      "alias": "Conditional OTP Check",
+      "config": {
+        "default.reference.value": "mfa"
+      }
+    },
+    {
+      "id": "81e95a6d-f918-42fc-928f-b3fd5d4f1d9d",
+      "alias": "Conditional OTP Check",
+      "config": {}
+    },
+    {
+      "id": "2aadc31e-a3f0-4764-a158-a336000e186f",
+      "alias": "OTP Form Config",
+      "config": {
+        "default.reference.value": "otp"
+      }
+    },
+    {
       "id": "0b04c87c-ea16-419d-9068-f36a243fdb5e",
       "alias": "create unique user config",
       "config": {
@@ -2379,7 +2549,7 @@
       "name": "Configure OTP",
       "providerId": "CONFIGURE_TOTP",
       "enabled": true,
-      "defaultAction": false,
+      "defaultAction": true,
       "priority": 10,
       "config": {}
     },
@@ -2483,13 +2653,18 @@
   "firstBrokerLoginFlow": "first broker login",
   "attributes": {
     "cibaBackchannelTokenDeliveryMode": "poll",
-    "cibaExpiresIn": "120",
     "cibaAuthRequestedUserHint": "login_hint",
-    "oauth2DeviceCodeLifespan": "600",
+    "clientOfflineSessionMaxLifespan": "0",
     "oauth2DevicePollingInterval": "5",
-    "parRequestUriLifespan": "60",
+    "clientSessionIdleTimeout": "0",
+    "clientOfflineSessionIdleTimeout": "0",
     "cibaInterval": "5",
-    "realmReusableOtpCode": "false"
+    "realmReusableOtpCode": "false",
+    "cibaExpiresIn": "120",
+    "oauth2DeviceCodeLifespan": "600",
+    "parRequestUriLifespan": "60",
+    "clientSessionMaxLifespan": "0",
+    "organizationsEnabled": "false"
   },
   "keycloakVersion": "25.0.6",
   "userManagedAccessAllowed": false,
