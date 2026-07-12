@@ -1,8 +1,11 @@
-version: "3.9"
-
 services:
   db:
-    image: pgvector/pgvector:pg16
+    # Custom image combining PostGIS (for zones/GEOMETRY/ST_Contains) with
+    # pgvector (for employees.face_embedding) - see postgres/Dockerfile.
+    # ankane/pgvector alone does NOT include PostGIS despite its similar
+    # naming to postgis/postgis - using it would break schema.sql's
+    # `CREATE EXTENSION postgis` line entirely.
+    build: ./postgres
     container_name: safety-db
     restart: unless-stopped
     environment:
@@ -15,7 +18,7 @@ services:
       - db_data:/var/lib/postgresql/data
       - ../contracts/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U safety -d safety_platform"]
+      test: [ "CMD-SHELL", "pg_isready -U safety -d safety_platform" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -63,7 +66,10 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://safety:safety_dev_pw@db:5432/safety_platform
+      # psycopg3 driver explicit in the connection string - matches
+      # requirements.txt's psycopg[binary]==3.1.19, not the psycopg2
+      # SQLAlchemy defaults to otherwise.
+      DATABASE_URL: postgresql+psycopg://safety:safety_dev_pw@db:5432/safety_platform
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       KEYCLOAK_URL: http://keycloak:8080
