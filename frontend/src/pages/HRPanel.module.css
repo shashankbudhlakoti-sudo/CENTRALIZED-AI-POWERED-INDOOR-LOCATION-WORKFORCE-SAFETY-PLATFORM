@@ -5,6 +5,8 @@
   gap: 16px;
   color: #e4e7ec;
   font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  background: #0b0e14;
+  min-height: 100vh;
 }
 
 .header {
