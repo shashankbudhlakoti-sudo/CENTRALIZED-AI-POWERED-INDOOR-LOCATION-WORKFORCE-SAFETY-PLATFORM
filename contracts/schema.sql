@@ -6,8 +6,7 @@
 
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS pgcrypto; -- for gen_random_uuid()
--- CREATE EXTENSION IF NOT EXISTS vector;   -- pgvector NOT included in postgis/postgis image.
-                                            -- Re-enable once a pgvector-capable image/Dockerfile is set up (needed for Phase 5 face_embedding).
+CREATE EXTENSION IF NOT EXISTS vector;   -- pgvector, compiled into the custom postgres/Dockerfile image
 
 -- ------------------------------------------------------------
 -- ENUM TYPES
@@ -39,7 +38,7 @@ CREATE TABLE employees (
     keycloak_user_id VARCHAR(100) UNIQUE, -- links to Keycloak identity
     consent_given   BOOLEAN NOT NULL DEFAULT FALSE,
     consent_given_at TIMESTAMPTZ,
-    -- face_embedding  VECTOR(128), -- requires pgvector extension; add back once installed (Phase 5)
+    face_embedding  VECTOR(128), -- nullable until enrolled; written by hr_manager/security_admin enrollment flow
     active          BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -152,6 +151,7 @@ CREATE INDEX idx_audit_log_actor ON audit_log (actor_user_id, created_at DESC);
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE position_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE zones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY employees_department_isolation ON employees
     USING (
@@ -174,6 +174,42 @@ CREATE POLICY position_events_department_isolation ON position_events
             WHERE department = current_setting('app.current_department', true)
         )
     );
+
+CREATE POLICY tags_department_isolation ON tags
+    USING (
+        current_setting('app.current_role', true) IN ('security_admin', 'general_manager')
+        OR employee_id IS NULL  -- unassigned tags (inventory) visible to everyone
+        OR employee_id IN (
+            SELECT id FROM employees
+            WHERE department = current_setting('app.current_department', true)
+        )
+    );
+
+-- ------------------------------------------------------------
+-- ML SERVICE DATABASE ROLE
+-- Direct-DB-access role for the ML service (position filtering,
+-- anomaly detection, checkpoint face-match). Read-only on business
+-- data, with a narrow write exception for its own audit logging.
+-- ------------------------------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ml_service_ro') THEN
+        CREATE ROLE ml_service_ro WITH LOGIN PASSWORD 'ml_service_dev_pw';
+    END IF;
+END
+$$;
+
+-- Revoke first, in case a broader grant was applied manually at some point
+-- (e.g. GRANT SELECT ON ALL TABLES IN SCHEMA public) — always re-apply the
+-- narrow, intentional grants below as the source of truth.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ml_service_ro;
+
+GRANT SELECT ON zones, tags, employees, position_events, checkpoint_events TO ml_service_ro;
+GRANT INSERT ON audit_log TO ml_service_ro;
+GRANT USAGE, SELECT ON SEQUENCE audit_log_id_seq TO ml_service_ro;
+-- Deliberately NOT granted: INSERT/UPDATE/DELETE on any table except
+-- audit_log. If ml_service_ro is ever seen writing anywhere else,
+-- that's a real bug — grants should be revisited, not the name changed.
 
 -- ------------------------------------------------------------
 -- RETENTION / AUTO-PURGE (compliance, 30-90 days, cron job calls this)
