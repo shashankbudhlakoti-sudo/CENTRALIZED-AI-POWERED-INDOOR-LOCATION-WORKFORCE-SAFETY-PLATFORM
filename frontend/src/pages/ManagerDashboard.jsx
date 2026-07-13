@@ -1,4 +1,4 @@
-// General Manager dashboard - Tier 4, organizational visibility
+﻿// General Manager dashboard - Tier 4, organizational visibility
 // (department summaries, manager directory) rather than Security's
 // operational visibility (exact coordinates, live map) - Section 11.
 //
@@ -29,13 +29,13 @@ export default function ManagerDashboard() {
           <div className={styles.summaryCard}>
             <div className={styles.summaryLabel}>Active alerts (org-wide)</div>
             <div className={`${styles.summaryValue} ${alertCount > 0 ? styles.warn : styles.ok}`}>
-              {alertCount ?? "—"}
+              {alertCount ?? "—”"}
             </div>
           </div>
           <div className={styles.summaryCard}>
             <div className={styles.summaryLabel}>Checkpoint mismatches</div>
             <div className={`${styles.summaryValue} ${mismatchCount > 0 ? styles.critical : styles.ok}`}>
-              {mismatchCount ?? "—"}
+              {mismatchCount ?? "—”"}
             </div>
           </div>
         </div>
@@ -52,7 +52,7 @@ export default function ManagerDashboard() {
       )}
 
       {loading && departments.length === 0 && !departmentsError && (
-        <div className={styles.emptyState}>Loading department summaries…</div>
+        <div className={styles.emptyState}>Loading department summaries—¦</div>
       )}
 
       {!loading && departments.length === 0 && !departmentsError && (

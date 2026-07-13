@@ -165,3 +165,57 @@
   color: #7B879E;
   margin-top: 6px;
 }
+
+/* ---------- Department Tile Grid (Manager dashboard) ---------- */
+.tileGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.tile {
+  background: #121A2B;
+  border: 1px solid #2A3A55;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.tileHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.tileName {
+  font-size: 14px;
+  font-weight: 600;
+  color: #E7ECF5;
+  text-transform: capitalize;
+}
+.tileMetric {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: #7B879E;
+  padding: 4px 0;
+}
+.tileMetricValue {
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 600;
+  color: #E7ECF5;
+}
+
+/* ---------- Shared error/empty states (used across IT/Finance/Manager) ---------- */
+.errorBanner {
+  background: #2A1418;
+  border: 1px solid #5c2e2e;
+  color: #F2A93B;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.emptyState {
+  padding: 24px 0;
+  text-align: center;
+  color: #6b7280;
+  font-size: 13.5px;
+}
