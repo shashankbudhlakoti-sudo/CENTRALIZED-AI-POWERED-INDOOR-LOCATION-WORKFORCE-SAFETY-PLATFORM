@@ -57,18 +57,24 @@ def test_predict_next_does_not_mutate_filter_state():
     assert first == second
 
 
-def test_predict_next_confidence_decreases_further_into_the_future():
-    """Predicting 10 seconds ahead should be less confident than
-    predicting 1 second ahead - uncertainty grows with extrapolation
-    distance, and the returned confidence should reflect that."""
+def test_predict_next_accuracy_m_grows_further_into_the_future():
+    """Predicting 30 seconds ahead should have worse (larger) accuracy_m
+    than predicting 1 second ahead - uncertainty grows with extrapolation
+    distance, and the returned accuracy_m should reflect that.
+
+    Renamed from the original test_predict_next_confidence_decreases_...:
+    the original asserted far_confidence < near_confidence, which held for
+    an earlier clipped-0-1 "confidence" score but is the WRONG direction
+    for accuracy_m (meters of positioning error) - a real error estimate
+    should grow, not shrink, the further into the future you extrapolate.
+    See position_filter.py's accuracy_m fix for the full explanation.
+    """
     f = BadgeKalmanFilter()
     f.update(0.0, 0.0, t=0.0)
     f.update(1.0, 0.0, t=1.0)
-
-    _, _, near_confidence = f.predict_next(seconds_ahead=1.0)
-    _, _, far_confidence = f.predict_next(seconds_ahead=30.0)
-
-    assert far_confidence < near_confidence
+    _, _, near_accuracy_m = f.predict_next(seconds_ahead=1.0)
+    _, _, far_accuracy_m = f.predict_next(seconds_ahead=30.0)
+    assert far_accuracy_m > near_accuracy_m
 
 
 def test_predict_next_stationary_badge_stays_put():

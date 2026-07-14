@@ -168,6 +168,57 @@ async def filter_position(
 
     return FilteredPosition(tag_id=reading.tag_id, x=x, y=y, accuracy_m=accuracy_m)
 
+class PredictPositionRequest(BaseModel):
+    tag_id: str = Field(..., max_length=64)
+    seconds_ahead: float = Field(..., ge=0.0)
+
+
+class PredictedPosition(BaseModel):
+    tag_id: str
+    x: float
+    y: float
+    accuracy_m: float  # same meters-based convention as FilteredPosition.accuracy_m,
+    # expected to be larger (worse) than a real update()'s accuracy_m since
+    # this is pure dead-reckoning extrapolation, not a new measurement.
+
+
+@app.post("/internal/predict-position", response_model=PredictedPosition)
+async def predict_position(
+    req: PredictPositionRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Dead-reckoning prediction for one badge, `seconds_ahead` into the
+    future from its last known real measurement - bridges brief signal
+    gaps (a badge walking behind a pillar, a beacon dropping one reading)
+    without waiting for the next real reading to arrive.
+
+    Does NOT mutate filter state - repeated calls for the same tag always
+    extrapolate from the same last real update, so this can be called
+    speculatively (e.g. by the frontend for smoother rendering between
+    updates) without side effects or compounding drift.
+
+    Like filter-position, this is internal service-to-service traffic and
+    not audit-logged - high-frequency positional data, not a discrete
+    security-sensitive action (contrast with checkpoint-verify/enroll-face,
+    which touch biometric data and are audit-logged).
+    """
+    kf = registry.get(req.tag_id)
+    try:
+        x, y, accuracy_m = kf.predict_next(req.seconds_ahead)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No known position for tag '{req.tag_id}' yet - "
+                   f"call /internal/filter-position at least once first",
+        ) from exc
+
+    logger.info(
+        "predicted position tag=%s seconds_ahead=%.1f accuracy_m=%.2f",
+        req.tag_id, req.seconds_ahead, accuracy_m,
+    )
+    return PredictedPosition(tag_id=req.tag_id, x=x, y=y, accuracy_m=accuracy_m)
+
+
 
 # ---------------------------------------------------------------------------
 # Fingerprinting (Section 5 - Train Mode)
@@ -469,3 +520,4 @@ async def check_login_anomaly(
         is_anomalous=is_anomalous,
         details=details
     )
+
