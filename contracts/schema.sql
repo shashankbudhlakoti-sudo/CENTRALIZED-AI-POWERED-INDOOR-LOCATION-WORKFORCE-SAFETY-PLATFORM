@@ -18,7 +18,8 @@ CREATE TYPE user_role AS ENUM (
 
 CREATE TYPE alert_type AS ENUM (
     'zone_breach', 'fall_detected', 'inactivity',
-    'panic_button', 'unauthorized_access', 'checkpoint_mismatch', 'tag_offline'
+    'panic_button', 'unauthorized_access', 'checkpoint_mismatch', 'tag_offline',
+    'impossible_travel'
 );
 
 CREATE TYPE alert_severity AS ENUM ('info', 'warning', 'critical');
