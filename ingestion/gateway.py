@@ -8,10 +8,11 @@ backend's ingestion endpoint: POST /api/v1/positions
 Topic convention (agree with ESP32 firmware):
     safety/gateway/<gateway_id>/tag/<tag_uid>   payload: {"rssi": -67, "ts": 1720000000}
 
-This file only does raw RSSI collection + forwarding. Actual trilateration /
-Kalman filtering to (x, y) happens in Track B's /ml pipeline OR here as a
-simple placeholder — see resolve_position() below, swap in the real filter
-once it exists.
+Position resolution: raw RSSI from 3+ named gateways -> trilaterate() gives a
+noisy raw (x, y) -> BadgeKalmanFilter smooths it into a stable estimate plus
+an accuracy_m figure. See GATEWAY_POSITIONS below - this is the one thing
+you MUST fill in with your real, measured gateway locations before this
+produces anything meaningful.
 """
 
 import json
@@ -20,33 +21,65 @@ import time
 import requests
 import paho.mqtt.client as mqtt
 
+from trilateration import rssi_to_distance, trilaterate
+from position_filter import PositionFilterRegistry
+
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 GATEWAY_TOPIC_FILTER = "safety/gateway/+/tag/+"
 
+# REQUIRED: fill in with your real, measured gateway locations (Step 1 of
+# the setup guide) - same coordinate units as your floor plan
+# (FLOORPLAN_BOUNDS is 1000x700 in the frontend). Trilateration is only
+# as good as these numbers; get them from real measurement, not guesses.
+GATEWAY_POSITIONS: dict[str, tuple[float, float]] = {
+    "gw-sw": (0.0, 0.0),
+    "gw-se": (4.45, 0.0),
+    "gw-nw": (0.0, 4.11),
+}
+
 # In-memory buffer of latest RSSI per tag per gateway, until enough
 # gateways report in to resolve a position.
 _rssi_buffer: dict[str, dict[str, float]] = {}
 
+# One Kalman filter instance per tag, smoothing raw trilaterated positions
+# into stable estimates over time (see ml-service/app/models/position_filter.py -
+# this is a straight copy of that module so the gateway can run standalone
+# without importing across service boundaries; keep both in sync if you
+# change the filter's tuning).
+_position_filters = PositionFilterRegistry()
 
-def resolve_position(tag_uid: str) -> tuple[float, float] | None:
+
+def resolve_position(tag_uid: str) -> tuple[float, float, float] | None:
     """
-    PLACEHOLDER position resolver.
-    Replace with real trilateration/fingerprinting (Track B, Phase 4),
-    which genuinely needs 3+ gateways to compute a real (x, y).
+    Resolves a tag's smoothed (x, y, accuracy_m) from whatever gateways
+    have reported RSSI for it so far.
 
-    TESTING NOTE: threshold is set to 1 right now so a single laptop
-    scanner can exercise the full pipeline end-to-end (raw RSSI -> MQTT
-    -> this -> backend -> database) without needing 3 physical gateways
-    yet. Position returned is NOT real (x, y) — just proves the pipe
-    works. Bump this back to >=3 once real gateways/trilateration exist.
+    Returns None if fewer than 3 known gateways have reported - this is a
+    hard geometric requirement (see trilateration.py), not a tunable
+    threshold. Requires GATEWAY_POSITIONS to be filled in with real
+    coordinates; unknown gateway_ids are silently ignored by trilaterate().
     """
     readings = _rssi_buffer.get(tag_uid, {})
-    if len(readings) < 1:
+    if not GATEWAY_POSITIONS:
+        print("[gateway] GATEWAY_POSITIONS is empty - fill in real gateway coordinates first")
         return None
-    # naive placeholder — NOT real position, just proves the pipeline works
-    return (0.0, 0.0)
+
+    distances = {gw_id: rssi_to_distance(rssi) for gw_id, rssi in readings.items()}
+    raw = trilaterate(GATEWAY_POSITIONS, distances)
+    if raw is None:
+        return None  # fewer than 3 usable gateways reporting yet
+
+    raw_x, raw_y = raw
+    # Confidence scales with how many gateways contributed - a reading
+    # triangulated from exactly 3 is trusted less than one from 4+.
+    n_usable = len([g for g in readings if g in GATEWAY_POSITIONS])
+    confidence = min(1.0, n_usable / max(len(GATEWAY_POSITIONS), 3))
+
+    kalman = _position_filters.get(tag_uid)
+    smoothed_x, smoothed_y, accuracy_m = kalman.update(raw_x, raw_y, t=time.time(), confidence=confidence)
+    return smoothed_x, smoothed_y, accuracy_m
 
 
 # Cache of tag_uid -> real database UUID, so we don't hit the lookup
@@ -74,7 +107,7 @@ def resolve_tag_id(tag_uid: str) -> str | None:
         return None
 
 
-def send_position(tag_uid: str, x: float, y: float):
+def send_position(tag_uid: str, x: float, y: float, accuracy_m: float):
     real_tag_id = resolve_tag_id(tag_uid)
     if real_tag_id is None:
         return  # can't post without a real tag_id — skip this reading
@@ -82,11 +115,18 @@ def send_position(tag_uid: str, x: float, y: float):
     try:
         resp = requests.post(
             f"{BACKEND_URL}/api/v1/positions",
-            json={"tag_id": real_tag_id, "floor": 1, "x": x, "y": y, "source": "raw"},
+            json={
+                "tag_id": real_tag_id,
+                "floor": 1,
+                "x": x,
+                "y": y,
+                "accuracy_m": accuracy_m,
+                "source": "filtered",
+            },
             timeout=3,
         )
         resp.raise_for_status()
-        print(f"[gateway] posted position for {tag_uid} (tag_id={real_tag_id})")
+        print(f"[gateway] posted position for {tag_uid} (tag_id={real_tag_id}) accuracy_m={accuracy_m:.2f}")
     except requests.RequestException as e:
         print(f"[gateway] failed to POST position for {tag_uid}: {e}")
 
@@ -107,7 +147,8 @@ def on_message(client, userdata, msg):
 
         pos = resolve_position(tag_uid)
         if pos:
-            send_position(tag_uid, *pos)
+            x, y, accuracy_m = pos
+            send_position(tag_uid, x, y, accuracy_m)
     except (IndexError, json.JSONDecodeError, KeyError) as e:
         print(f"[gateway] malformed message on {msg.topic}: {e}")
 

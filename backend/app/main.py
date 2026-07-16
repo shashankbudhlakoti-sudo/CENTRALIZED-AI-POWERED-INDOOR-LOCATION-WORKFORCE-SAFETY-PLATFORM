@@ -143,15 +143,18 @@ def latest_positions(user: CurrentUser = Depends(get_current_user), db: Session 
 
 
 @app.post("/api/v1/positions", status_code=201)
-def ingest_position(payload: PositionIn, db: Session = Depends(get_db)):
-    """Ingestion-only endpoint: called by the gateway (app/ or ingestion/ service),
-    authenticated separately via a service token/mTLS in production — not the
-    interactive-user Keycloak flow. Left unauthenticated here for local dev."""
+async def ingest_position(payload: PositionIn, db: Session = Depends(get_db)):
     pe = models.PositionEvent(**payload.model_dump())
     db.add(pe)
     db.commit()
+    await manager.broadcast({
+        "tag_id": str(payload.tag_id),
+        "x": payload.x,
+        "y": payload.y,
+        "floor": payload.floor,
+        "recorded_at": pe.recorded_at.isoformat() if pe.recorded_at else None,
+    })
     return {"status": "recorded"}
-
 
 # ---------- Alerts ----------
 
