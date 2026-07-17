@@ -1,13 +1,15 @@
 """
 Client-credentials auth for the dedicated 'ml-service' Keycloak client.
 
-Used ONLY by processes with no inbound authenticated request to forward a
-token from - currently, that's just the periodic tag_offline sweep
-(tag_offline_sweep.py). Everything else in this service (zone_breach,
-inactivity, checkpoint verification) reuses the calling request's own JWT
-via AuthenticatedUser.raw_token, since those are always triggered by an
-already-authenticated call. This module exists specifically for the case
-where there is no calling request at all.
+Used by every call this service makes into the backend's service-only
+endpoints (POST /api/v1/anomalies/detect, PATCH checkpoint match) as well
+as the periodic tag_offline sweep. Backend's get_service_caller requires
+the token's azp claim to be an approved service client - it rejects any
+forwarded human user JWT regardless of which route triggered the call, so
+AuthenticatedUser.raw_token is never valid here even for zone_breach,
+inactivity, or checkpoint verification, all of which are triggered by an
+already-authenticated human request. This module is the only valid source
+of a token for any of those calls.
 
 Setup (Shashank, in progress): a separate 'ml-service' Keycloak client
 (not reusing safety-platform-api - human-facing and service-facing
@@ -23,6 +25,14 @@ from typing import Optional
 import httpx
 
 KEYCLOAK_ISSUER = os.environ.get("KEYCLOAK_ISSUER")  # same var auth.py uses, e.g. https://auth.internal/realms/airport
+# Same "reachable from inside this container" concern as auth.py's JWKS
+# fetch: in local dev, KEYCLOAK_ISSUER is localhost, which resolves to
+# this container itself, not the host's Keycloak. Reuses the same
+# KEYCLOAK_JWKS_BASE_URL env var auth.py already defines for exactly this
+# purpose, rather than inventing a third variable for the same concern.
+# Falls back to KEYCLOAK_ISSUER when unset, so this is a no-op in any
+# environment where both hostnames already match (e.g. real deployment).
+KEYCLOAK_TOKEN_BASE_URL = os.environ.get("KEYCLOAK_JWKS_BASE_URL", KEYCLOAK_ISSUER)
 SERVICE_CLIENT_ID = os.environ.get("ML_SERVICE_CLIENT_ID", "ml-service")
 SERVICE_CLIENT_SECRET = os.environ.get("ML_SERVICE_CLIENT_SECRET")  # pending Shashank's Keycloak setup
 
@@ -37,7 +47,7 @@ async def get_service_token() -> str:
     yet - expected until the 'ml-service' Keycloak client exists."""
     global _cached_token, _cached_expiry
 
-    if not KEYCLOAK_ISSUER or not SERVICE_CLIENT_SECRET:
+    if not KEYCLOAK_TOKEN_BASE_URL or not SERVICE_CLIENT_SECRET:
         raise RuntimeError(
             "KEYCLOAK_ISSUER / ML_SERVICE_CLIENT_SECRET not set - the dedicated "
             "'ml-service' Keycloak client hasn't been wired up yet. "
@@ -47,7 +57,7 @@ async def get_service_token() -> str:
     if _cached_token and time.time() < _cached_expiry:
         return _cached_token
 
-    token_url = f"{KEYCLOAK_ISSUER}/protocol/openid-connect/token"
+    token_url = f"{KEYCLOAK_TOKEN_BASE_URL}/protocol/openid-connect/token"
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
             token_url,

@@ -1,15 +1,34 @@
+import enum
 import uuid
 from datetime import datetime
 
 from sqlalchemy import (
     Column, String, Boolean, DateTime, Integer, SmallInteger,
-    Float, ForeignKey, JSON, BigInteger, Text
+    Float, ForeignKey, JSON, BigInteger, Text, Enum
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
+
+# ---------- Custom Database Enums ----------
+
+class AlertTypeEnum(str, enum.Enum):
+    zone_breach = "zone_breach"
+    inactivity = "inactivity"
+    tag_offline = "tag_offline"
+    impossible_travel = "impossible_travel"
+    checkpoint_mismatch = "checkpoint_mismatch"
+
+
+class SeverityEnum(str, enum.Enum):
+    info = "info"
+    warning = "warning"
+    critical = "critical"
+
+
+# ---------- Models ----------
 
 class Employee(Base):
     __tablename__ = "employees"
@@ -61,7 +80,7 @@ class PositionEvent(Base):
     floor = Column(Integer, default=1, nullable=False)
     x = Column(Float, nullable=False)
     y = Column(Float, nullable=False)
-    rssi_raw = Column(JSON)
+    rssi_raw = Column(JSONB)
     accuracy_m = Column(Float)
     source = Column(String(20), default="filtered", nullable=False)
     recorded_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -86,13 +105,16 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    alert_type = Column(String(30), nullable=False)
-    severity = Column(String(20), default="warning", nullable=False)
+    alert_type = Column(Enum(AlertTypeEnum, name="alert_type", inherit_schema=True), nullable=False)
+    severity = Column(Enum(SeverityEnum, name="alert_severity", inherit_schema=True), default=SeverityEnum.warning, nullable=False)
     employee_id = Column(UUID(as_uuid=True), ForeignKey("employees.id"))
     zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id"))
-    details = Column(JSON)
+    details = Column(JSONB)
     acknowledged = Column(Boolean, default=False, nullable=False)
-    acknowledged_by = Column(String(100))
+
+    # CHANGE THIS LINE FROM String(100) TO UUID:
+    acknowledged_by = Column(UUID(as_uuid=True))
+
     acknowledged_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 

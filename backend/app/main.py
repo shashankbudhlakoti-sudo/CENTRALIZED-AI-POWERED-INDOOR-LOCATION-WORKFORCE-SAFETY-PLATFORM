@@ -269,13 +269,14 @@ def list_checkpoints(status: Optional[str] = None, user: CurrentUser = Depends(g
 
 # ---------- Anomalies (ML service reports, backend owns the alerts write) ----------
 
-VALID_ANOMALY_TYPES = {"zone_breach", "inactivity", "tag_offline"}
+VALID_ANOMALY_TYPES = {"zone_breach", "inactivity", "tag_offline", "impossible_travel"}
 
 # Severity defaults per anomaly type — tune as real-world data comes in.
 ANOMALY_SEVERITY = {
     "zone_breach": "critical",
     "inactivity": "warning",
     "tag_offline": "warning",
+    "impossible_travel": "critical",
 }
 
 

@@ -21,6 +21,7 @@ from pathlib import Path
 
 from app.security.auth import AuthenticatedUser, get_current_user, require_role
 from app.security.audit import log_action
+from app.security.service_auth import get_service_token
 from app.models.position_filter import PositionFilterRegistry
 from app.models.train_mode import TrainingWalk, LabeledSample
 from app.models.fingerprinting import FingerprintModel
@@ -140,7 +141,7 @@ async def filter_position(
             employee_id = await zone_repo.get_tag_employee(reading.tag_id)
             await report_anomaly(
                 alert_type="zone_breach",
-                bearer_token=user.raw_token,
+                bearer_token=await get_service_token(),
                 employee_id=employee_id,
                 tag_id=reading.tag_id,
                 zone_id=zone_id,
@@ -156,7 +157,7 @@ async def filter_position(
             employee_id = await zone_repo.get_tag_employee(reading.tag_id)
             await report_anomaly(
                 alert_type="inactivity",
-                bearer_token=user.raw_token,
+                bearer_token=await get_service_token(),
                 employee_id=employee_id,
                 tag_id=reading.tag_id,
                 details={"x": x, "y": y, "still_for_seconds": INACTIVITY_THRESHOLD_SECONDS},
@@ -365,7 +366,7 @@ async def checkpoint_verify(
     await patch_checkpoint_match(
         checkpoint_event_id=req.checkpoint_event_id,
         result=result,
-        service_token=user.raw_token,
+        service_token=await get_service_token(),
     )
 
     # Every checkpoint verification touches an individual's data - logged
@@ -508,7 +509,7 @@ async def check_login_anomaly(
                 
             await report_anomaly(
                 alert_type="impossible_travel",
-                bearer_token=user.raw_token,
+                bearer_token=await get_service_token(),
                 employee_id=req.employee_id,
                 details=details,
             )

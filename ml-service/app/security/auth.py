@@ -21,7 +21,16 @@ from jose import jwt, JWTError
 
 KEYCLOAK_ISSUER = os.environ["KEYCLOAK_ISSUER"]  # e.g. http://localhost:8080/realms/safety-platform
 KEYCLOAK_AUDIENCE = os.environ.get("KEYCLOAK_AUDIENCE", "ml-service")
-JWKS_URL = f"{KEYCLOAK_ISSUER}/protocol/openid-connect/certs"
+
+# JWKS is fetched from a possibly different network path than the issuer
+# claim itself - e.g. in local dev, the browser (and thus the token's `iss`)
+# reaches Keycloak via localhost, but this service running inside Docker
+# must reach the same Keycloak via host.docker.internal. KEYCLOAK_ISSUER
+# is still the ONLY value used for the issuer claim check below - this
+# split exists purely so the two concerns (reachability vs. claim identity)
+# can't accidentally get coupled again.
+KEYCLOAK_JWKS_BASE_URL = os.environ.get("KEYCLOAK_JWKS_BASE_URL", KEYCLOAK_ISSUER)
+JWKS_URL = f"{KEYCLOAK_JWKS_BASE_URL}/protocol/openid-connect/certs"
 JWKS_CACHE_TTL_SECONDS = 3600
 
 _bearer = HTTPBearer(auto_error=True)
