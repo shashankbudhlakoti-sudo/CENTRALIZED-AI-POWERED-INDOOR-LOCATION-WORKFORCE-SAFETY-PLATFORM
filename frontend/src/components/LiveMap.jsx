@@ -19,7 +19,10 @@ import { usePositionFeed } from "../hooks/usePositionFeed";
 import styles from "./LiveMap.module.css";
 
 const FLOORPLAN_URL = "/floorplan-placeholder.svg";
-const FLOORPLAN_BOUNDS = [[0, 0], [4.11, 4.45]]; // [length, width] in meters //
+const FLOORPLAN_BOUNDS = [
+  [0, 0],
+  [4.11, 4.45],
+]; // [y, x] max in real meters — y = room length (4.11m), x = room width (4.45m), matching gateway.py's GATEWAY_POSITIONS coordinate system
 
 const STALE_AFTER_MS = 10_000; // badge dot starts fading past this age
 const OFFLINE_AFTER_MS = 30_000; // badge dot goes grey/dashed past this age

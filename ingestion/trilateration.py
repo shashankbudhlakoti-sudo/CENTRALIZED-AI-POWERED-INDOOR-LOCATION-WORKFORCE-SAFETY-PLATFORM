@@ -23,10 +23,10 @@ from __future__ import annotations
 
 import numpy as np
 
-# TODO: calibrate against your real hardware. Walk exactly 1 meter from
-# a gateway with the test phone broadcasting, read the RSSI it reports,
-# and set this to that value (typically -50 to -65 dBm for BLE).
-MEASURED_POWER_AT_1M = -59.0
+# Calibrated from a real 1-meter measurement on the actual laptop/phone
+# hardware (17 readings averaged: -51.7 dBm). Re-measure if you switch to
+# different hardware (different laptop Bluetooth adapter or phone).
+MEASURED_POWER_AT_1M = -51.7
 
 # Typical indoor value is 2.0 (free space) to 4.0 (many walls/obstacles).
 # Airport terminals with metal structures often sit around 2.5-3.5.
