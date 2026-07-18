@@ -18,6 +18,7 @@ enabled, Direct access grants off (no username/password needed), assigned
 a dedicated 'service_account' role rather than security_admin so audit
 entries can distinguish the automated sweep from a human admin action.
 """
+import asyncio
 import os
 import time
 from typing import Optional
@@ -58,17 +59,34 @@ async def get_service_token() -> str:
         return _cached_token
 
     token_url = f"{KEYCLOAK_TOKEN_BASE_URL}/protocol/openid-connect/token"
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(
-            token_url,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": SERVICE_CLIENT_ID,
-                "client_secret": SERVICE_CLIENT_SECRET,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
+
+    # Retries a transient connection failure a few times before giving up -
+    # local Docker networking (host.docker.internal / container-name DNS)
+    # has shown intermittent connection blips in this environment: the same
+    # URL succeeds when tested standalone but occasionally fails under an
+    # actual request. A short retry absorbs that without failing the whole
+    # anomaly report on one flaky attempt.
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    token_url,
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id": SERVICE_CLIENT_ID,
+                        "client_secret": SERVICE_CLIENT_SECRET,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            break
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            if attempt < 2:
+                await asyncio.sleep(0.5 * (attempt + 1))
+    else:
+        raise last_exc
 
     _cached_token = data["access_token"]
     # Refresh 30s early so a request never races the token expiring mid-flight.

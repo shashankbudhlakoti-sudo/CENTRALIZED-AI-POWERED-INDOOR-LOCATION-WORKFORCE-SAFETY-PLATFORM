@@ -30,7 +30,6 @@ from app.services.embedding_backend import EmbeddingGenerator, InsightFaceEmbedd
 from app.services.enrolled_embeddings_repo import EnrolledEmbeddingsRepository, PostgresEnrolledEmbeddings
 from app.services.checkpoint_client import patch_checkpoint_match
 from app.services.employee_client import patch_employee_face_embedding
-from app.services.checkpoint_client import patch_checkpoint_match
 from app.services import zone_repo
 from app.services.anomaly_client import report_anomaly
 from app.services import tag_offline_sweep
@@ -304,7 +303,7 @@ class PredictResult(BaseModel):
 
 
 @app.post("/internal/fingerprint/predict", response_model=PredictResult)
-async def predict_position(req: PredictRequest, user: AuthenticatedUser = Depends(get_current_user)):
+async def predict_position_fingerprint(req: PredictRequest, user: AuthenticatedUser = Depends(get_current_user)):
     model_path = MODEL_DIR / req.zone_id
     if not model_path.exists():
         raise HTTPException(status_code=404, detail=f"No trained model for zone '{req.zone_id}' yet")
@@ -508,7 +507,20 @@ async def check_login_anomaly(
     )
 
     if is_anomalous:
-        logger.warning("Impossible travel anomaly detected for employee=%s: %s", req.employee_id, details)
+        # Log only derived/aggregate figures, not raw coordinates - this
+        # module's own docstring states no exact coordinates should hit
+        # logs. The full `details` (including previous_location) still
+        # goes to the backend via report_anomaly() below, since the
+        # alerts row/dashboard map genuinely need the real coordinates;
+        # this only trims what's written to this service's own logs.
+        logger.warning(
+            "Impossible travel anomaly detected for employee=%s: "
+            "distance_km=%.2f time_delta_hours=%.3f calculated_speed_kmh=%.2f",
+            req.employee_id,
+            details.get("distance_km", -1),
+            details.get("time_delta_hours", -1),
+            details.get("calculated_speed_kmh", -1),
+        )
         try:
             if req.client_ip:
                 details["client_ip"] = req.client_ip
