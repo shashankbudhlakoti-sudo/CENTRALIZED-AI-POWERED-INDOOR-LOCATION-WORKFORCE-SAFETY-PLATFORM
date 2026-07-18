@@ -29,6 +29,8 @@ from app.models.face_match import find_best_match
 from app.services.embedding_backend import EmbeddingGenerator, InsightFaceEmbeddingGenerator
 from app.services.enrolled_embeddings_repo import EnrolledEmbeddingsRepository, PostgresEnrolledEmbeddings
 from app.services.checkpoint_client import patch_checkpoint_match
+from app.services.employee_client import patch_employee_face_embedding
+from app.services.checkpoint_client import patch_checkpoint_match
 from app.services import zone_repo
 from app.services.anomaly_client import report_anomaly
 from app.services import tag_offline_sweep
@@ -459,7 +461,11 @@ async def enroll_face(
 
     if embedding is None:
         return EnrollFaceResult(employee_id=req.employee_id, status="no_face", embedding=None)
-
+    await patch_employee_face_embedding(
+        employee_id=req.employee_id,
+        embedding=embedding.tolist(),
+        service_token=await get_service_token(),
+    )
     return EnrollFaceResult(
         employee_id=req.employee_id,
         status="enrolled",

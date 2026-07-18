@@ -247,7 +247,33 @@ def update_checkpoint_match(checkpoint_id: UUID, payload: CheckpointMatchIn, db:
 
     db.commit()
     return {"status": "updated", "alert_created": is_mismatch}
+class FaceEmbeddingIn(BaseModel):
+    embedding: list[float]
 
+
+@app.patch("/api/v1/employees/{employee_id}/face-embedding")
+def update_employee_face_embedding(
+    employee_id: UUID,
+    payload: FaceEmbeddingIn,
+    db: Session = Depends(get_db),
+    _caller: str = Depends(get_service_caller),
+):
+    """ml-service calls this after /internal/enroll-face generates a real
+    embedding - same single-write-path pattern as checkpoint match:
+    ml-service never writes to Postgres directly, backend owns the write."""
+    if len(payload.embedding) != 512:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "invalid_embedding", "message": f"Expected 512 dimensions, got {len(payload.embedding)}"}},
+        )
+    emp = db.get(models.Employee, employee_id)
+    if not emp:
+        raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Employee not found"}})
+    emp.face_embedding = payload.embedding
+    emp.consent_given = True
+    emp.consent_given_at = datetime.utcnow()
+    db.commit()
+    return {"status": "updated", "employee_id": str(employee_id)}
 
 @app.get("/api/v1/checkpoints")
 def list_checkpoints(status: Optional[str] = None, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):

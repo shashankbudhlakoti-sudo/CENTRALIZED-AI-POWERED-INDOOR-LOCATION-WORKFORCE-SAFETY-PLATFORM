@@ -8,6 +8,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import declarative_base
+from pgvector.sqlalchemy import Vector
 
 Base = declarative_base()
 
@@ -42,6 +43,7 @@ class Employee(Base):
     keycloak_user_id = Column(String(100), unique=True)
     consent_given = Column(Boolean, default=False, nullable=False)
     consent_given_at = Column(DateTime(timezone=True))
+    face_embedding = Column(Vector(512), nullable=True)
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
