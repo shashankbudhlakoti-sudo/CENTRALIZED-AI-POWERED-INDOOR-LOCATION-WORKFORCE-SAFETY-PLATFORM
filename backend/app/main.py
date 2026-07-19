@@ -1,13 +1,15 @@
+import os
+import uuid as uuid_lib
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 from uuid import UUID
-
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
-
 from app.database import get_db, set_rls_context, engine
 from app import models
 from app.auth import get_current_user, CurrentUser, get_service_caller
@@ -29,7 +31,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Photo storage: persistent local disk, served as static files. Phase 5 -
+# real camera integration needs a stable, fetchable photo_url; previously
+# checkpoint/enrollment testing only ever used a manually-hosted test file.
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/app/uploads"))
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://host.docker.internal:8000").rstrip("/")
 
+
+@app.post("/api/v1/photos")
+async def upload_photo(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
+):
+    if user.role not in ("security_admin", "hr_manager"):
+        raise HTTPException(status_code=403, detail={"error": {"code": "forbidden", "message": "Not permitted"}})
+    ext = Path(file.filename).suffix or ".jpg"
+    filename = f"{uuid_lib.uuid4()}{ext}"
+    dest = UPLOAD_DIR / filename
+    contents = await file.read()
+    dest.write_bytes(contents)
+    return {"photo_url": f"{PUBLIC_BASE_URL}/uploads/{filename}"}
 
 # ---------- Pydantic schemas (mirrors contracts/api-spec.md) ----------
 
@@ -282,18 +305,17 @@ def list_checkpoints(status: Optional[str] = None, user: CurrentUser = Depends(g
     if status:
         q = q.where(models.CheckpointEvent.match_status == status)
     rows = db.execute(q.order_by(models.CheckpointEvent.triggered_at.desc())).scalars().all()
+    zone_ids = {r.zone_id for r in rows}
+    zones_by_id = {z.id: z.name for z in db.query(models.Zone).filter(models.Zone.id.in_(zone_ids)).all()}
     return [
         {
-            "id": str(r.id), "zone_id": str(r.zone_id), "photo_url": r.photo_url,
+            "id": str(r.id), "zone_id": str(r.zone_id), "zone_name": zones_by_id.get(r.zone_id), "photo_url": r.photo_url,
             "match_status": r.match_status, "match_confidence": r.match_confidence,
             "match_employee_id": str(r.match_employee_id) if r.match_employee_id else None,
             "triggered_at": r.triggered_at.isoformat(),
         }
         for r in rows
     ]
-
-
-# ---------- Anomalies (ML service reports, backend owns the alerts write) ----------
 
 VALID_ANOMALY_TYPES = {"zone_breach", "inactivity", "tag_offline", "impossible_travel"}
 
