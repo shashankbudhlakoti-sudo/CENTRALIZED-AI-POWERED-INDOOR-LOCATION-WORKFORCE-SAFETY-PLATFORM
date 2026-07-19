@@ -214,7 +214,7 @@ def acknowledge_alert(alert_id: UUID, payload: AlertAck, user: CurrentUser = Dep
 # ---------- Checkpoints (shared feature — split seam) ----------
 
 @app.post("/api/v1/checkpoints", status_code=201)
-def create_checkpoint(payload: CheckpointIn, db: Session = Depends(get_db)):
+def create_checkpoint(payload: CheckpointIn, db: Session = Depends(get_db), _caller: str = Depends(get_service_caller)):
     """Track A: called by the camera-trigger service when someone passes a checkpoint.
     Creates the row with match_status='pending'; Track B's face-match service
     fills in the result afterward via PATCH /checkpoints/{id}/match."""

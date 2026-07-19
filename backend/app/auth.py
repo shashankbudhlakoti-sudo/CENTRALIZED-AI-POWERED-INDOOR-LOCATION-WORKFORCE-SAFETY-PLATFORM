@@ -82,7 +82,7 @@ def get_current_user(authorization: str = Header(...)) -> CurrentUser:
 # Client IDs allowed to call service-to-service endpoints (anomalies, checkpoint match).
 # These are machine credentials (client_credentials grant) — never subject to the
 # human MFA check above, since there's no interactive login to complete MFA on.
-ALLOWED_SERVICE_CLIENTS = {"ml-service"}
+ALLOWED_SERVICE_CLIENTS = {"ml-service", "corridor-camera"}
 
 
 def get_service_caller(authorization: str = Header(...)) -> str:
