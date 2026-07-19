@@ -349,6 +349,7 @@
       "admin-cli": [],
       "account-console": [],
       "ml-service": [],
+      "corridor-camera": [],
       "broker": [
         {
           "id": "1b588ccf-50d9-46f5-9a44-c2fefc39d9af",

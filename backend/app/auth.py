@@ -67,8 +67,8 @@ def get_current_user(authorization: str = Header(...)) -> CurrentUser:
     # before assuming the realm itself is broken.
     amr = set(claims.get("amr", []))
     mfa = bool(amr & MFA_METHODS)
-
-    if role in TIER_3_4_ROLES and not mfa:
+    is_service_client = claims.get("azp", "") in ALLOWED_SERVICE_CLIENTS
+    if role in TIER_3_4_ROLES and not mfa and not is_service_client:
         raise HTTPException(status_code=403, detail={"error": {"code": "mfa_required", "message": "MFA required for this role"}})
 
     return CurrentUser(
